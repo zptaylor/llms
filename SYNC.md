@@ -4,7 +4,7 @@ Auto-mirrored (redacted) subset of the private `nixos-config` repo: the
 Podman containers that serve local LLM inference on an Intel Arc B70, plus
 the host-side vLLM build tree.
 
-- Last synced from private commit `f6f176cad0b1` on `2026-10-04T05:57:49Z`.
+- Last synced from private commit `fd139e4c103f` on `2026-10-04T06:11:41Z`.
 - How: `scripts/sync-public/sync-public-repo.sh` in the private repo runs a
   deterministic redactor (`scripts/sync-public/redact.py`) and pushes only
   when the redacted tree changes.
