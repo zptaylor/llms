@@ -1,0 +1,4 @@
+audit-data/audit.db
+# GitHub Copilot OAuth device-flow token cache (GITHUB_COPILOT_TOKEN_DIR).
+# Contains access/refresh secrets — never commit.
+copilot-tokens/

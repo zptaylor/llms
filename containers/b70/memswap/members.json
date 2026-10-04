@@ -1,0 +1,74 @@
+{
+  "_comment": [
+    "Member registry for the vLLM VRAM-swap (memswap) coordinator.",
+    "Each member is one long-lived vLLM engine on the single Arc B70 (32 GB); only",
+    "ONE may be awake at a time. Edited by hand; read by scripts/vllm-memswapd.py.",
+    "'compose' is relative to the repo root. 'aliases' are extra request names that",
+    "resolve to this member. 'sticky_names' resolve to whatever is currently awake",
+    "(falling back to default_model) so a generic client group cannot thrash the card."
+  ],
+  "socket": "0.0.0.0:8002",
+  "default_model": "qwen3.8-exl3",
+  "_retired_note": [
+    "2026-10-02: the sleep-mode pair was retired and its containers moved to",
+    "containers/b70/.archive/ (vllm-qwen3.8-sleep, vllm-nex-n2.5-mini-sleep),",
+    "along with the rest of the GPTQ-Int4 qwen3.8 family (-mult, -single,",
+    "-bigcontext, -native) and vllm-qwen38-heretic. Their members were removed",
+    "from this registry -- they named compose paths that no longer exist, and",
+    "compose() only logs 'compose file missing' before failing.",
+    "The legacy request names (qwen3.8, qwen3.8-65k, qwen3.8-96k, qwen3.8-131k)",
+    "still reach the card: LiteLLM resolves them to openai//model @ :8000, which",
+    "is whatever owns the port -- today the boot-enabled EXL3 engine below.",
+    "What remains is a single SLEEP-LESS member, so the coordinator can only",
+    "report and stay passive (see _sleep_less); the card is owned by",
+    "systemd.user.services.vllm-qwen38-exl3, not by a swap."
+  ],
+  "_idle_sleep_note": [
+    "0 = the idle-release is DISABLED. vllm-memswapd.py:489 reads",
+    "`if self.idle_sleep_seconds > 0 and idle_for > self.idle_sleep_seconds`, so a",
+    "non-positive value makes the coordinator never park the card on idleness.",
+    "The coordinator is the only thing that calls /sleep; engines were parked",
+    "by an explicit `scripts/vllm-memswap.sh` operation (that path is retired",
+    "with the pair: nothing here is sleep-capable any more)."
+  ],
+  "idle_sleep_seconds": 0,
+  "_autostart_members_note": [
+    "false = the coordinator never starts a member on its own, it only releases",
+    "an idle card and detects split-brain. Historically this was required while",
+    "vllm-qwen3.8-mult owned :8000 and auto-starting its pair member would have",
+    "crash-looped on the bind. Both of those are retired; keep this false so the",
+    "coordinator cannot fight the boot-enabled vllm-qwen38-exl3 unit for the card."
+  ],
+  "autostart_members": false,
+  "sticky_names": ["b70", "local", "auto-local"],
+  "members": [
+    {
+      "name": "qwen3.8-exl3",
+      "aliases": ["exl3", "exl3xpu", "qwen3.8-27b-exl3"],
+      "_note": "Sole owner of the :8000 slot: turboderp/Qwen3.8-27B-exl3 (EXL3 trellis 4.00 bpw) served by the exl3xpu engine. Start or restart it with the unit, not with a swap: `systemctl --user stop vllm-memswap; systemctl --user restart vllm-qwen38-exl3; systemctl --user start vllm-memswap`.",
+      "_sleep_less": [
+        "This is a SLEEP-LESS member on purpose: the exl3xpu engine does not take",
+        "--enable-sleep-mode, and this container deliberately does NOT set",
+        "VLLM_SERVER_DEV_MODE (that would mount POST /sleep, and POSTing /sleep at a",
+        "sleep-less engine hangs its core -- the API keeps answering GETs while",
+        "completions never run). Consequence: /is_sleeping is absent, so the",
+        "coordinator reports this member as 'running, sleep state unreadable' and",
+        "stays passive for that tick instead of guessing who owns the card.",
+        "container_sleep_capable() in scripts/vllm-memswapd.py exists for this",
+        "case and refuses to /sleep it. Do NOT enable MEMSWAP_ENABLED=true in the",
+        "litellm compose while this member is the awake owner: the pre-call hook",
+        "would call /ensure, which fails closed on an unreadable member and would",
+        "refuse every qwen3.8/local request.",
+        "The `qwen3.8` / `local` / `b70` LiteLLM groups still reach it unchanged:",
+        "they resolve to openai//model @ :8000, and this container mounts the",
+        "checkpoint at /model, so the served id matches whether or not the engine",
+        "honours --served-model-name."
+      ],
+      "port": 8000,
+      "container": "vllm-qwen3.8-exl3",
+      "compose": "containers/b70/vllm-qwen3.8-exl3/docker-compose.yml",
+      "service": "vllm-qwen3.8-exl3",
+      "health_timeout_s": 1800
+    }
+  ]
+}

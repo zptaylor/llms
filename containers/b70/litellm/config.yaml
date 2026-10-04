@@ -1,0 +1,108 @@
+model_list: []
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+    db: 0
+  # NOTE: the PrometheusLogger is NOT enabled with `success_callback:
+  # ["prometheus"]` here. That leaves only the string in litellm.success_callback
+  # (the proxy logs "Initialized Success Callbacks - ['prometheus']"), and this
+  # build's request path dispatches to logger *instances*, so every litellm_*
+  # family was exported with HELP/TYPE and no samples and every litellm:*
+  # recording rule in lts-rules.yml stayed empty. Listing it in failure_callback
+  # as well additionally makes the second instantiation die with "Duplicated
+  # timeseries". A real instance is registered by
+  # enable_prometheus_metrics.enable_instance below instead — see the comment
+  # block in that file.
+  callbacks:
+    - custom_callbacks.proxy_handler_instance
+    # context_compressor removed (2026-10-02): it summarised every >=40K-token
+    # request via hermes-3-8b on the GTX 1070 (measured ~32s) before forwarding,
+    # which ate the client's compaction budget. hermes compacts on its own.
+    - custom_callbacks._proxy_handler_audit
+    - enable_prometheus_metrics.enable_instance
+    - vram_swap.handler_instance
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: true
+  fallbacks:
+    - orchestrator:
+        - hermes-3-8b
+    - HOST-B:
+        - qwen3.8
+    - local:
+        - hermes-3-8b
+    # No `hermes:` entry: the hermes-agent group is PINNED (fails loudly) — it
+    # mediates its own tool calls/memory, so answering from another backend would
+    # silently skip the second brain. (A malformed dict entry used to sit here and
+    # made GET /fallback/hermes 500.)
+    - free:
+        - glm-5.2-free
+        - gemma-4-31b-free
+        - inkling-free
+        - nemotron-super-free
+        - gpt-oss-20b-free
+    - nv-coding-best:
+        - nemotron-3-ultra
+        - nemotron-4-ultra
+        - nemotron-super-free
+    - all-coding-best:
+        - nemotron-3-ultra
+        - nemotron-4-ultra
+        - nemotron-super-free
+        - glm-5.2-free
+        - gemma-4-31b-free
+        - gpt-oss-20b-free
+    - auto:
+        - openrouter
+        - deepseek
+  context_window_fallbacks:
+    - qwen3.8:
+        - hermes-3-8b
+    - qwen3.8-65k:
+        - hermes-3-8b
+    - qwen3.8-96k:
+        - hermes-3-8b
+    - auto:
+        - hermes-3-8b
+    - b70:
+        - hermes-3-8b
+    - local:
+        - hermes-3-8b
+
+guardrails:
+  - guardrail_name: "pii-content-filter"
+    litellm_params:
+      guardrail: litellm_content_filter
+      mode: "pre_call"
+      default_on: true
+      patterns:
+        - {pattern_type: "prebuilt", pattern_name: "aws_access_key",  action: "MASK"}
+        - {pattern_type: "prebuilt", pattern_name: "github_token",    action: "MASK"}
+      categories:
+        - {category: "claims_phi_disclosure", enabled: false, action: "BLOCK", severity_threshold: "low"}
+        - {category: "denied_medical_advice", enabled: false, action: "BLOCK", severity_threshold: "medium"}
+
+  - guardrail_name: "presidio-phi"
+    litellm_params:
+      guardrail: custom_callbacks.litellm_presidio
+      mode: "pre_call"
+      default_on: true
+      output_parse_pii: true
+      presidio_filter_scope: input
+      presidio_language: "en"
+      presidio_ad_hoc_recognizers: "./hooks/secrets-recognizer.json"
+      pii_entities_config:
+        PERSON: "MASK"
+        PHONE_NUMBER: "MASK"
+        EMAIL_ADDRESS: "MASK"
+        CREDIT_CARD: "MASK"
+        US_SSN: "MASK"
+        MEDICAL_LICENSE: "MASK"
+        CUSTOM_SECRET: "MASK"

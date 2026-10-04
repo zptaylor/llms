@@ -1,0 +1,124 @@
+services:
+  litellm-db:
+    image: postgres:16-alpine
+    container_name: litellm-db-b70
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-CHANGE_ME}
+      POSTGRES_DB: litellm
+    volumes:
+      - ./db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: litellm-redis-b70
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    container_name: presidio-analyzer-b70
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=WARNING
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/health', timeout=5)"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    container_name: presidio-anonymizer-b70
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=WARNING
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/health', timeout=5)"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-b70
+    restart: unless-stopped
+    labels:
+      - "tsdproxy.enable=true"
+      - "tsdproxy.name=litellm-b70"
+    ports:
+      - "4000:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      presidio-analyzer:
+        condition: service_healthy
+      presidio-anonymizer:
+        condition: service_healthy
+    environment:
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      MOONSHOT_API_KEY: "${MOONSHOT_API_KEY:-}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:-}"
+      # Gateway API key of the local hermes-agent (its API also binds 0.0.0.0
+      # now, so the `hermes` group can reach host.docker.internal:8001). Written
+      # into this dir's .env from SOPS `hermes_api_key` by credentials.nix.
+      HERMES_API_KEY: "${HERMES_API_KEY:-}"
+      GITHUB_COPILOT_TOKEN_DIR: "/copilot-tokens"
+      GITHUB_COPILOT_API_BASE: "${GITHUB_COPILOT_API_BASE:-https://api.githubcopilot.com}"
+      GITHUB_COPILOT_DEVICE_CODE_URL: "${GITHUB_COPILOT_DEVICE_CODE_URL:-https://va.ghe.com/login/device/code}"
+      GITHUB_COPILOT_ACCESS_TOKEN_URL: "${GITHUB_COPILOT_ACCESS_TOKEN_URL:-https://va.ghe.com/login/oauth/access_token}"
+      GITHUB_COPILOT_API_KEY_URL: "${GITHUB_COPILOT_API_KEY_URL:-https://va.ghe.com/api/v3/copilot_internal/v2/token}"
+      DATABASE_URL: "postgresql://litellm:${DB_PASSWORD:-CHANGE_ME}@litellm-db:5432/litellm"
+      LITELLM_SALT_KEY: "${LITELLM_SALT_KEY:-generate-a-long-random-string-for-production}"
+      LITELLM_USE_MODEL_GROUP_FALLBACKS: "true"
+      PRESIDIO_ANALYZER_API_BASE: "http://presidio-analyzer:3000"
+      PRESIDIO_ANONYMIZER_API_BASE: "http://presidio-anonymizer:3000"
+      PYTHONPATH: "/app"
+      LITELLM_AUDIT_DB: "/litellm/audit/audit.db"
+      MEMSWAP_URL: "http://host.docker.internal:8002"
+      MEMSWAP_ENABLED: "${MEMSWAP_ENABLED:-false}"
+      MEMSWAP_MEMBERS: "${MEMSWAP_MEMBERS:-qwen3.8:8000,nex-n2.5-mini:8003}"
+      MEMSWAP_STICKY: "${MEMSWAP_STICKY:-b70,local,auto-local}"
+      MEMSWAP_ENSURE_TIMEOUT_S: "${MEMSWAP_ENSURE_TIMEOUT_S:-2400}"
+    volumes:
+      - ./audit-data:/litellm/audit
+      - ./config.yaml:/app/config.yaml:ro
+      - ./local_models.py:/app/local_models.py:ro,z
+      - ./custom_callbacks.py:/app/custom_callbacks.py:ro,z
+      - ./context_compressor.py:/app/context_compressor.py:ro,z
+      - ./enable_prometheus_metrics.py:/app/enable_prometheus_metrics.py:ro,z
+      - ./hooks:/app/hooks:ro
+      - ./vram_swap.py:/app/vram_swap.py:ro,z
+      - ./copilot-tokens:/copilot-tokens:z
+    command:
+      - "--config"
+      - "/app/config.yaml"
+      - "--port"
+      - "4000"
+      - "--host"
+      - "0.0.0.0"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

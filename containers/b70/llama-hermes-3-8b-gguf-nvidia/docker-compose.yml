@@ -1,0 +1,48 @@
+services:
+  llama-hermes-3-8b-gguf-nvidia:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:e24d443359b2ec78dc0b9b87bc45c0c8c785ab4d215514c2503b50e627f347c6
+    container_name: hermes-8b-b70
+    restart: unless-stopped
+    ulimits:
+      memlock: -1
+    labels:
+      - "tsdproxy.enable=true"
+      - "tsdproxy.name=hermes-8b-b70"
+    ports:
+      - "8010:8080"
+    entrypoint: ["/entrypoint.sh"]
+    devices:
+      - "nvidia.com/gpu=all"
+    volumes:
+      - /nix/store:/nix/store:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ${HOME}/models/Hermes-3-Llama-3.1-8B-GGUF:/models:ro
+    command:
+      - --model
+      - /models/Hermes-3-Llama-3.1-8B.Q4_K_M.gguf
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --alias
+      - hermes-3-8b
+      - --ctx-size
+      - "81920"
+      - --parallel
+      - "2"
+      - --fit
+      - "off"
+      - --n-gpu-layers
+      - "99"
+      - --flash-attn
+      - "on"
+      - -ctk
+      - q4_0
+      - -ctv
+      - q4_0
+      - --threads
+      - "12"
+      - --threads-batch
+      - "12"
+      - --load-mode
+      - mlock

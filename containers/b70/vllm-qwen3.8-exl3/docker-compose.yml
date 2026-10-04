@@ -1,0 +1,55 @@
+services:
+  vllm-qwen3.8-exl3:
+    image: ghcr.io/0xsero/exl3xpu@sha256:21412bdd7535e9c653eeb3d099dce3bc79a83d440def2cd9556111c79c870fa8
+    container_name: vllm-qwen3.8-exl3
+    restart: "no"
+    labels:
+      - "tsdproxy.enable=true"
+      - "tsdproxy.name=qwen3-8-exl3-b70"
+    ports:
+      - "8000:8000"
+    devices:
+      - /dev/dri:/dev/dri
+    shm_size: "8g"
+    environment:
+      ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
+      ZE_AFFINITY_MASK: "0"
+      HF_HUB_OFFLINE: "1"
+    volumes:
+      - ${HOME}/models/qwen3.8-exl3:/model:ro
+      - /dev/dri/by-path:/dev/dri/by-path:ro
+      - vllm-exl3-vllm-cache:/root/.cache/vllm
+      - vllm-exl3-triton-cache:/root/.triton
+    command:
+      - models/qwen3.8-27b-exl3-4.00bpw
+      - --gpu
+      - "0"
+      - --port
+      - "8000"
+      - --model-path
+      - /model
+      - --set
+      - vllm.gpu_memory_utilization=0.94
+      - --set
+      - vllm.max_model_len=262144
+      - --set
+      - served_model_name=/model
+      - --set
+      - vllm.max_num_batched_tokens=4096
+      - --set
+      - vllm.speculative_config.num_speculative_tokens=1
+      # MTP is ON at k=1 (2026-10-02; was `vllm.speculative_config=null` since 2026-09-30).
+      # The recipe ships k=3, but with mtp_num_hidden_layers=1 vLLM re-runs the same MTP layer
+      # once per draft, which is what collapsed acceptance in long sessions here.
+      # Rollback: put this line back to vllm.speculative_config=null.
+      # prefix caching is ON via the image's model.yaml; to trade it off use --set vllm.enable_prefix_caching=false
+      - "--"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --reasoning-parser
+      - qwen3
+
+volumes:
+  vllm-exl3-vllm-cache:
+  vllm-exl3-triton-cache:
