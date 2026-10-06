@@ -44,6 +44,10 @@ services:
       # Rollback: put this line back to vllm.speculative_config=null.
       # prefix caching is ON via the image's model.yaml; to trade it off use --set vllm.enable_prefix_caching=false
       - "--"
+      # no `--disable-log-requests` here: this image dropped it (and has no unrecognized-arg fallback),
+      # so it aborts startup with `vllm: error: unrecognized arguments`. The two distinct levers are:
+      - --no-enable-log-requests
+      - --disable-uvicorn-access-log
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder

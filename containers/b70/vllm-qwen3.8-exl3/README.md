@@ -1,5 +1,5 @@
 <!-- Summary: vllm-qwen3.8-exl3 — the EXL3 (exl3xpu engine) route for Qwen3.8-27B on one Arc B70: why it is a separate engine, the pins, profiles, how to start it (unit ownership), memswap membership, measured throughput, traps. -->
-<!-- Map: 1-14 what/why, 15-27 STATUS, 28-45 It is a different engine, not another flag-set, 46-59 The two pins (both verified to exist), 60-88 Profiles, 89-128 Launch, 129-148 What the recipe adds beyond the GPTQ siblings, 149-197 Traps already priced in, 198-236 Starting it — and the unit-ownership gotcha, 237-271 Surviving a reboot, 272-304 Pair membership (memswap), 305-335 Measured on b70-host, 336-438 Speculative decoding: OFF (2026-09-30) then ON at k=1, 439-478 Structured output: the Failed-to-advance-FSM line, 479-534 Structured output: json_schema is broken (open upstream), 535-573 Verification state, 574-645 Auto-mode tool-call leaks, 646-665 Rollback, 666-675 Sibling docs. -->
+<!-- Map: 1-14 what/why, 15-27 STATUS, 28-45 It is a different engine, not another flag-set, 46-59 The two pins (both verified to exist), 60-98 Profiles, 99-138 Launch, 139-158 What the recipe adds beyond the GPTQ siblings, 159-221 Traps already priced in, 222-260 Starting it — and the unit-ownership gotcha, 261-295 Surviving a reboot, 296-328 Pair membership (memswap), 329-360 Measured on b70-host, 361-485 Speculative decoding: OFF (2026-09-30) then ON at k=1, 486-525 Structured output: the Failed-to-advance-FSM line, 526-581 Structured output: json_schema is broken (open upstream), 582-620 Verification state, 621-712 Auto-mode tool-call leaks, 713-732 Rollback, 733-742 Sibling docs. -->
 # vllm-qwen3.8-exl3 — Qwen3.8-27B EXL3 4.00 bpw on one B70 (host port 8000)
 
 **The `:8000` backend.** This started as a *second* route to Qwen3.8-27B on the
@@ -73,6 +73,16 @@ because `max_num_batched_tokens` is back at the recipe's **4096**: raising it to
 again (measured: 9.29 GiB needed vs 9.1 GiB available). If you raise one, expect
 to lower the other. And note that at 0.94 the KV budget has ~0.2 GiB of slack, so
 the engine sits close to the line — at 0.90 the same failure appears immediately.
+
+Re-measured 2026-10-02 **with MTP k=1** (`scripts/vllm-exl3-ab.sh apply batch8192`):
+8192 *does* fit once the multimodal profiling budget is shrunk —
+`--set vllm.limit_mm_per_prompt={"image":1,"video":1}`, and that key works (the
+boot log then reads `'limit_mm_per_prompt': {'image': 1, 'video': 1}`) — but only
+just: `GPU KV cache size: 265,174 tokens` = **1.01×** the 262,144 window, against
+303,056 at 4096 + the recipe's 32/4. That is −37,882 tokens of pool for a knob
+that buys prefill/activation budget only, and it leaves the prefix cache (72.5 %
+hit on agent transcripts) nothing to work with — so it is **not** the config to
+land. The batch-token cost dominates: the shrunk mm budget only partly offsets it.
 
 `model.yaml` ships `0.965` + `262144`; **`0.965` OOMs** — measured startup-free
 on this host family is ~29.5/31.9 GiB, so keep `≤ 0.94`. That is a different
@@ -176,7 +186,21 @@ steps), so they undercount generated tokens; compare only within that campaign.
   you are reclaiming that memory from the host, not from the card.
 - **Prefix caching is ON** (`model.yaml`: `enable_prefix_caching: true`, and it
   must be explicit because vLLM 0.26 leaves it off for hybrid GDN models). Do
-  not benchmark cold cells without the entropy guard.
+  not benchmark cold cells without the entropy guard. Reuse is **block-aligned**,
+  measured 2026-10-02: a ~960-token shared prefix got
+  `prefix_cache_hits_total` **+0**, a ~6.1K-token one got **+3200 per call**
+  (2 × the 1600-token block) — short shared prompts silently reuse nothing.
+  Correctness with the cache hot: 6/6 shared-prefix cases retrieved a fact
+  planted inside the *cached* prefix, flat repetition stats, and 800-token
+  generations that ran to the cap with no mid-generation collapse. So the
+  `compressed-tensors`/W4A16 repetition degeneration recorded in
+  [`../.archive/vllm-qwen3.8-27b-uncensored-autoround/README.md`](../.archive/vllm-qwen3.8-27b-uncensored-autoround/README.md)
+  is *not* a prefix-caching defect, and does not transfer to this route — there
+  the cause was the export's calibrated FP8 KV scales.
+- **Under spec decode, `min_p` and `logit_bias` are silently ignored** (vLLM
+  logs it at boot). That is the one client-visible degradation lever on this
+  route: a caller relying on either for repetition control gets nothing. Affects
+  every quant route, not just this one.
 - **`--reasoning-parser qwen3`, never `--reasoning-format deepseek`** — the
   latter crash-loops this image family (see `../../../AGENTS.md`).
 - **The served id is overridden back to `/model`.** Measured: unlike the
@@ -317,6 +341,7 @@ Greedy, `temperature 0`, streaming, `max_tokens` as noted:
 | ~600-token code prompt, 400 tok | **72.6 tok/s** |
 | ~8K-token prompt | TTFT 1.0 s warm / **5.1 s cold**, then 76.8 tok/s |
 | ~32K-token prompt | TTFT 1.0 s warm / **6.4 s cold**, then 72.2 tok/s |
+| ~97K-token **unique** prompt ×3 concurrent (2026-10-03, MTP off, idle engine) | TTFT **67.6 / 134.6 / 201.7 s** — prefills are serialized (~1.45k tok/s), `Waiting` 2→1→0, 0 preemptions |
 | Aggregate decode, C1 / C2 / C4 / C8 | **103 / 191 / 327 / 486 tok/s** |
 
 Read this honestly:
@@ -384,6 +409,28 @@ of 1940 vocab blocks`). **303,056 tokens still holds one full 262,144-token
 session** (1.16×) — that was the requirement — but a second long session has less
 headroom than the MTP-off pool, so watch `Waiting` / `num_preemptions_total` when
 2–3 agent sessions overlap.
+
+**Measured 2026-10-03: that warning is the bug that shipped.** The gateway held
+three long sessions at once (a 20-hour CLI session at 143–146k prompt tokens, the
+30-min `oci-fleet-nixos` job at ~98–103k, `daily-local-model-trends` at ~56–72k —
+demand ≈318k tokens against a 303,056 pool). The engine froze in
+`Running: 1, Waiting: 2` all `reason="capacity"` with `Avg prompt throughput: 0.0
+tokens/s` for minutes and `num_preemptions_total` climbing 137→139: the waiting
+requests got *no* prefill, so hermes killed each stream at the end of its client
+budget, re-sent the same prompt, and killed it again (the CLI session logged one
+API call at `latency=2925.2s` and repeated `Stream stale for 900s … Killing
+connection`). A clean-engine probe with three concurrent *unique* ~97k-token
+prompts shows the second half of the problem — even with headroom, **serialized
+prefill**: TTFT 67.6 / 134.6 / 201.7s at ~1.45k tok/s, `Waiting` 2→1→0, 0
+preemptions. So depth *and* per-turn prefill time both count, which is why the fix
+landed on the client side (`hermes model.context_length: 131072` → compacts at
+96,000) rather than on this engine. Re-tested the pool lever the same day via
+`scripts/vllm-exl3-ab.sh apply mtpoff`: `GPU KV cache size: 376,253` and all three
+requests admitted, at the cost of **33.4 tok/s** C1 (`bench 3 300`) against 49.84
+for k=1 — reverted, so k=1 stays the landed config.
+**The harness gate cannot see any of this:** `gate` only checks that *one*
+262,144-token session is resident, which 303,056 tokens (1.16×) satisfies — the
+gate passes while the concurrent-agent case it is meant to protect is starving.
 
 **What k=1 buys (measured 2026-10-02 with `bench/sweep.py`, synthetic greedy
 prose).** Read the C1 row like-for-like: the MTP-off number is the engine's own
@@ -627,14 +674,34 @@ a long tool-heavy context, so a short-context probe under-samples it. The
 `hermes` arm therefore needs the long-context replay (or several hundred
 samples) before it can be judged.
 
-Both arms are single-tenant (the card and `:8000`), so swap, probe, revert:
+Both arms are single-tenant (the card and `:8000`), so recreate, probe, revert.
+`vllm-swap-restart.sh:78` is **not** the tool for this — it exits early with
+"already the awake member" for the one member that already owns the card — so the
+recreate goes through the unit:
 
 ```bash
-cd containers/b70/vllm-qwen3.8-exl3
-# flip the podman-compose command list's last `--` pair to: --tool-call-parser hermes
-bash ../../scripts/vllm-swap-restart.sh qwen3.8-exl3      # ~6 min cold, fewer warm
-python3 ../../scripts/toolcall-leak-probe.py --count 300
-# then flip the arg back and re-run the swap-restart before anything else uses :8000
+# scripted one lever at a time: edits the compose, recreates via the unit, gates the
+# 262,144-token pool, restores the pre-A/B compose on `revert`
+bash scripts/vllm-exl3-ab.sh apply toolxml    # only qwen3_xml is scripted; `hermes` by hand
+bash scripts/vllm-exl3-ab.sh probe 300        # the leak rate is this variant's gate
+bash scripts/vllm-exl3-ab.sh revert
+
+# or by hand — flip the command list's last `--` pair, then:
+systemctl --user stop vllm-memswap
+systemctl --user restart vllm-qwen38-exl3     # ~6 min cold, ~2 min warm
+systemctl --user start vllm-memswap
+python3 scripts/toolcall-leak-probe.py --count 300 --max-leak-rate 0.01
+# then flip the arg back and recreate again before anything else uses :8000
+```
+
+An unknown parser name fails at engine *startup*, so confirm it is in the image
+before flipping (`qwen3_xml` is **not** verified on this image — the arm measured
+below was `hermes`):
+
+```bash
+podman run --rm --entrypoint python3 \
+  "$(sed -n 's/^ *image: *//p' containers/b70/vllm-qwen3.8-exl3/docker-compose.yml)" -c \
+  "import vllm.entrypoints.openai.tool_parsers as p,os;print(sorted(os.listdir(p.__path__[0])))"
 ```
 
 Standing mitigations (independent of which parser wins): the malformed-tool-call
