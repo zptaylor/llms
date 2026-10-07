@@ -13,7 +13,7 @@ log() { printf '%s\n' "$*"; }
 warn() { printf 'warn: %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-[ -n "${LITELLM_MASTER_KEY:-}" ] || die "LITELLM_MASTER_KEY not set (export it or put it in containers/b70/litellm/.env)"
+[ -n "${LITELLM_MASTER_KEY:-}" ] || die "LITELLM_MASTER_KEY not set (export it or put it in containers/ai-host/litellm/.env)"
 command -v curl >/dev/null 2>&1 || die "curl required"
 
 backend_ids=""
@@ -91,7 +91,7 @@ log "qwen3.8, local, b70 and qwen3.8-65k answered through :4000 against it."
 log "Rollback is symmetric -- the GPTQ member serves /model too, so no row has"
 log "to be rewritten in either direction. See the compose's SERVED ID OVERRIDE"
 log "comment before changing that."
-log "containers/b70/AGENTS.md asks for a new model to also be a fallback inside"
+log "containers/ai-host/AGENTS.md asks for a new model to also be a fallback inside"
 log "the 'local' router; that carve-out does NOT apply to a separate engine like"
 log "this one, so it is INTENTIONALLY not done -- it would break the pin that"
 log "stops a request landing on an unintended engine (see the carve-out in that"

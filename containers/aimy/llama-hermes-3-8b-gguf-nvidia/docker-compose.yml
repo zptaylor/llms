@@ -1,13 +1,13 @@
 services:
   llama-hermes-3-8b-gguf-nvidia:
     image: ghcr.io/ggml-org/llama.cpp@sha256:e24d443359b2ec78dc0b9b87bc45c0c8c785ab4d215514c2503b50e627f347c6
-    container_name: hermes-8b-b70
+    container_name: hermes-8b-ai-host
     restart: unless-stopped
     ulimits:
       memlock: -1
     labels:
       - "tsdproxy.enable=true"
-      - "tsdproxy.name=hermes-8b-b70"
+      - "tsdproxy.name=hermes-8b-ai-host"
     ports:
       - "8010:8080"
     entrypoint: ["/entrypoint.sh"]

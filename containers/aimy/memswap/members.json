@@ -11,7 +11,7 @@
   "default_model": "qwen3.8-exl3",
   "_retired_note": [
     "2026-10-02: the sleep-mode pair was retired and its containers moved to",
-    "containers/b70/.archive/ (vllm-qwen3.8-sleep, vllm-nex-n2.5-mini-sleep),",
+    "containers/ai-host/.archive/ (vllm-qwen3.8-sleep, vllm-nex-n2.5-mini-sleep),",
     "along with the rest of the GPTQ-Int4 qwen3.8 family (-mult, -single,",
     "-bigcontext, -native) and vllm-qwen38-heretic. Their members were removed",
     "from this registry -- they named compose paths that no longer exist, and",
@@ -66,7 +66,7 @@
       ],
       "port": 8000,
       "container": "vllm-qwen3.8-exl3",
-      "compose": "containers/b70/vllm-qwen3.8-exl3/docker-compose.yml",
+      "compose": "containers/ai-host/vllm-qwen3.8-exl3/docker-compose.yml",
       "service": "vllm-qwen3.8-exl3",
       "health_timeout_s": 1800
     }

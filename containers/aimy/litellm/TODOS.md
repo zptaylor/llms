@@ -10,11 +10,11 @@ here. Historical "add model X" items are done and were removed from this list.
    `register-qwen3.8-aliases.sh` once the pair is verified awake-and-swapping.
 2. **Invert `HOST-B` fallback order** to `hermes-3-8b → qwen3.8` (currently
    reversed) — see `docs/vllm-xpu-swap-research.md` (qwen3.8's own capacity
-   failure under concurrent agents). **Status 2026-10-02 (b70 agent):** repo
+   failure under concurrent agents). **Status 2026-10-02 (ai-host agent):** repo
    config.yaml fallbacks already declare `HOST-B: [qwen3.8]` (line 25-26); only
    the DB row (`store_model_in_db: true`) still carries the old target —
    flipping it needs the litellm master key + DB access, which the agent
-   container doesn't have. One-line fix on b70: `curl -X PATCH
+   container doesn't have. One-line fix on ai-host: `curl -X PATCH
    http://localhost:4000/fallback -H "Authorization: Bearer
    $LITELLM_MASTER_KEY" -d '{"fallbacks": {"HOST-B": ["hermes-3-8b"]}}'` (or
    via the UI).
@@ -29,6 +29,6 @@ here. Historical "add model X" items are done and were removed from this list.
    returning 200 for the account key; re-run it when NVIDIA's free lineup
    changes (and update the `free` router's top-5 in the DB to match).
 5. ~~**`-sleep` container promotion**~~ — **closed 2026-10-02**: both sleep-pair
-   containers were retired into `containers/b70/.archive/` instead of being
+   containers were retired into `containers/ai-host/.archive/` instead of being
    promoted, so there is nothing left to keep in sync. `vllm-qwen3.8-exl3` owns
-   `:8000` on its own (see `containers/b70/README.md`).
+   `:8000` on its own (see `containers/ai-host/README.md`).

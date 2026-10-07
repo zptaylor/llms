@@ -58,7 +58,7 @@ register_one() {
 [ -n "${NVIDIA_API_KEY:-}" ] && \
   warn "NVIDIA_API_KEY exported locally — verifying the backend is reachable." || true
 curl -sf -m 10 "$API_BASE/models" -H "Authorization: Bearer ${NVIDIA_API_KEY:-os.environ/NVIDIA_API_KEY}" >/dev/null \
-  || warn "NVIDIA endpoint ($API_BASE) not reachable with local NVIDIA_API_KEY (is containers/b70/litellm/.env set?)"
+  || warn "NVIDIA endpoint ($API_BASE) not reachable with local NVIDIA_API_KEY (is containers/ai-host/litellm/.env set?)"
 
 for entry in "${NVIDIA_MODELS[@]}"; do
   IFS='|' read -r name upstream input_types <<< "$entry"

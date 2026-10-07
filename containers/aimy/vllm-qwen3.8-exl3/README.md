@@ -1,5 +1,5 @@
 <!-- Summary: vllm-qwen3.8-exl3 — the EXL3 (exl3xpu engine) route for Qwen3.8-27B on one Arc B70: why it is a separate engine, the pins, profiles, how to start it (unit ownership), memswap membership, measured throughput, traps. -->
-<!-- Map: 1-14 what/why, 15-27 STATUS, 28-45 It is a different engine, not another flag-set, 46-59 The two pins (both verified to exist), 60-98 Profiles, 99-138 Launch, 139-158 What the recipe adds beyond the GPTQ siblings, 159-221 Traps already priced in, 222-260 Starting it — and the unit-ownership gotcha, 261-295 Surviving a reboot, 296-328 Pair membership (memswap), 329-360 Measured on b70-host, 361-485 Speculative decoding: OFF (2026-09-30) then ON at k=1, 486-525 Structured output: the Failed-to-advance-FSM line, 526-581 Structured output: json_schema is broken (open upstream), 582-620 Verification state, 621-712 Auto-mode tool-call leaks, 713-732 Rollback, 733-742 Sibling docs. -->
+<!-- Map: 1-14 what/why, 15-27 STATUS, 28-45 It is a different engine, not another flag-set, 46-59 The two pins (both verified to exist), 60-98 Profiles, 99-138 Launch, 139-158 What the recipe adds beyond the GPTQ siblings, 159-221 Traps already priced in, 222-260 Starting it — and the unit-ownership gotcha, 261-295 Surviving a reboot, 296-328 Pair membership (memswap), 329-360 Measured on ai-host, 361-485 Speculative decoding: OFF (2026-09-30) then ON at k=1, 486-525 Structured output: the Failed-to-advance-FSM line, 526-581 Structured output: json_schema is broken (open upstream), 582-620 Verification state, 621-712 Auto-mode tool-call leaks, 713-732 Rollback, 733-742 Sibling docs. -->
 # vllm-qwen3.8-exl3 — Qwen3.8-27B EXL3 4.00 bpw on one B70 (host port 8000)
 
 **The `:8000` backend.** This started as a *second* route to Qwen3.8-27B on the
@@ -12,17 +12,19 @@ the sleep-mode pair and `-heretic` were **retired into
 Recipe: `SergiioB/intel-arc-pro-b70-inference-cookbook`,
 `docs/qwen38-27b/EXL3-XPU.md` @ `530ae03`.
 
-## STATUS — live on `b70-host` since 2026-09-28
+## STATUS — live on `ai-host` since 2026-09-28
 
 Running as the `:8000` backend, serving model id **`/model`** at the model's
 native **262144** window, verified through the proxy for `qwen3.8`, `local`,
 `b70`, `qwen3.8-65k`, `auto` and `qwen3.8-exl3`. **Tool calling verified**
 (32/32 assertions, raw and through the proxy). **MTP speculative decoding is ON
 at k=1** since 2026-10-02 (it was off from 2026-09-30 — see that section for the
-KV pool it costs and the +59 % it buys): `GPU KV cache size: 303,056 tokens`, so
-one full 262,144-token session still fits (1.16×). Boot **~6.5 min cold / ~2 min
+KV pool it costs and the +59 % it buys): `GPU KV cache size: 327,301 tokens`, so
+one full 262,144-token session still fits (1.25×). `gpu_memory_utilization` is
+**0.965** (the trellis-serve recipe value) since 2026-10-06 — the A/B that moved
+it there is `../vllm-qwen3.8-exl3-recipe-test/`. Boot **~6.5 min cold / ~2 min
 warm**. It is **boot-enabled** — see "Surviving a reboot". Measured throughput
-and the surprises found on the way: "Measured on b70-host" + "Traps" below. Rollback
+and the surprises found on the way: "Measured on ai-host" + "Traps" below. Rollback
 is one command — see "Rollback".
 
 ## It is a different engine, not another flag-set
@@ -64,15 +66,17 @@ and `max_num_batched_tokens` — each with its own reasoning comment there.)
 
 | Profile | `vllm.gpu_memory_utilization` | `vllm.max_model_len` | Notes |
 |---|---|---|---|
-| **live default** | `0.94` | `262144` | The model's full native window, and what is deployed. Needs a **clean** card (the swap script removes the incumbent first). Recipe's proven boundary: a 261,920-token prompt answered correctly, fp8 KV pool 287,040 tokens — **reproduced here exactly** (`GPU KV cache size: 287,040 tokens`, max concurrency 1.09x). |
+| **live default** | `0.965` | `262144` | The model's full native window, and what is deployed (the recipe's own value; moved `0.94 → 0.965` on 2026-10-06, `../vllm-qwen3.8-exl3-recipe-test/`). Needs a **clean** card (the swap script removes the incumbent first). Measured 2026-10-06: `Available KV cache memory: 11.22 GiB`, `GPU KV cache size: 327,301` (1.25×), `k=1`. Recipe's proven boundary: a 261,920-token prompt answered correctly, fp8 KV pool 287,040 tokens — reproduced here exactly at `0.94`. |
 | co-tenant-safe | `0.90` | `65536` | The recipe's served default, for a card that is NOT clean. At 0.90 the KV budget cannot cover 262144 (measured: 9.1 GiB available vs 9.29 GiB needed, engine reports max 256000). |
+| rollback | `0.94` | `262144` | What this container ran 2026-09-28 → 2026-10-06: `10.42 GiB`, `GPU KV cache size: 303,056` (1.16×). The old "`0.965` OOMs" rule; one line in the compose plus a recreate to go back. |
 
-**The window and the batch budget are coupled.** 262144 fits at 0.94 only
-because `max_num_batched_tokens` is back at the recipe's **4096**: raising it to
-8192 inflates the *vision encoder cache* enough that the GPTQ-budget check fails
-again (measured: 9.29 GiB needed vs 9.1 GiB available). If you raise one, expect
-to lower the other. And note that at 0.94 the KV budget has ~0.2 GiB of slack, so
-the engine sits close to the line — at 0.90 the same failure appears immediately.
+**The window and the batch budget are coupled.** 262144 fits only because
+`max_num_batched_tokens` is back at the recipe's **4096**: raising it to 8192
+inflates the *vision encoder cache* enough that the budget check fails again
+(measured at `0.94`: 9.29 GiB needed vs 9.1 GiB available). If you raise one,
+expect to lower the other. The `0.965` pool carries ~0.8 GiB more slack than the
+`0.94` one did, so batch8192 *may* now fit — **not re-measured**; the A/B that
+moved the memory fraction deliberately held every other knob fixed.
 
 Re-measured 2026-10-02 **with MTP k=1** (`scripts/vllm-exl3-ab.sh apply batch8192`):
 8192 *does* fit once the multimodal profiling budget is shrunk —
@@ -84,8 +88,17 @@ that buys prefill/activation budget only, and it leaves the prefix cache (72.5 %
 hit on agent transcripts) nothing to work with — so it is **not** the config to
 land. The batch-token cost dominates: the shrunk mm budget only partly offsets it.
 
-`model.yaml` ships `0.965` + `262144`; **`0.965` OOMs** — measured startup-free
-on this host family is ~29.5/31.9 GiB, so keep `≤ 0.94`. That is a different
+`model.yaml` ships `0.965` + `262144`, and **`0.965` is what is deployed since
+2026-10-06** — the earlier "`0.965` OOMs, keep `≤ 0.94`" note here was wrong for
+the current clean card. Measured on 2026-10-06: it boots and serves at `0.965`
+with `Available KV cache memory: 11.22 GiB` / `GPU KV cache size: 327,301`,
+against 10.42 GiB / 303,056 at `0.94` — i.e. +0.6 GiB of KV and +8.0 % of pool.
+The old measurement's premise (a startup footprint of ~29.5/31.9 GiB) predates
+the 2026-10-02 retirement of the sleep pair: with a co-tenant's weights no longer
+resident, `0.965` fits. Raw numbers and the confounds:
+`../vllm-qwen3.8-exl3-recipe-test/TEST-PLAN.md`. The `≤ 0.94` figure is now only
+the rollback line — one edit in this repo's compose plus a recreate. That is a
+different
 rule from the `0.82` ceiling documented for the GPTQ siblings in
 `../README.md`: that ceiling exists because *their* recipe's cudagraph capture
 ("decode, FULL") OOMs with a warm `torch.compile` cache. This engine's
@@ -129,7 +142,7 @@ podman pull ghcr.io/0xsero/exl3xpu@sha256:21412bdd…870fa8   # ~7.25 GiB compre
 ```
 
 Disk: **~40 GB** total (image 23.7 GB on disk as measured, + 15.7 GiB of
-weights; the cookbook quotes ~32 GB for the image alone). `b70-host`'s `/` is a
+weights; the cookbook quotes ~32 GB for the image alone). `ai-host`'s `/` is a
 1.9 TB disk that was at 97 % during this bring-up — check `df -h /` first, and
 note the weights land in `~/models` (same filesystem). Pull with the *rootless*
 store (the default here); under a containerd-backed daemon instead, force
@@ -219,11 +232,20 @@ steps), so they undercount generated tokens; compare only within that campaign.
   `:8000` with three siblings and the memswap pair, so it must never auto-start
   and steal the card from the GPU-lease coordinator.
 
+- **No auto-restart, on purpose.** `restart: "no"` here *and* `Restart = "no"` in
+  `systemd.user.services.vllm-qwen38-exl3`: a failed engine (bad `--set` value,
+  OOM, XPU crash) must stay down so its log is there to read and the failure is
+  visible, rather than being hidden by a restart loop that would also fight the
+  lease. Start it again by hand — `systemctl --user restart vllm-qwen38-exl3` —
+  after looking at `journalctl --user -u vllm-qwen38-exl3 | tail -50`.
+  `scripts/test-support/test-vllm-no-autorestart.py` guards all four surfaces
+  (unit, compose, quadlet, memswap's own autostart knobs).
+
 ## Starting it — and the unit-ownership gotcha
 
 **Start it from a systemd unit, not from an interactive shell**, or it dies the
 moment your shell does. The repo's containers are declared as user units with
-`Type=oneshot` + `RemainAfterExit=true` (see `hosts/b70-host/configuration.nix`),
+`Type=oneshot` + `RemainAfterExit=true` (see `hosts/ai-host/configuration.nix`),
 which is exactly what keeps their cgroup alive after `ExecStart` returns.
 
 Measured failure mode: starting it with a *transient* unit that exits reaps the
@@ -245,22 +267,22 @@ systemctl --user start vllm-memswap
 ```
 
 `vllm-swap-restart.sh` drives `podman`/`podman-compose` directly, so run it
-somewhere those work (a normal login shell on the b70, or a unit). Doing the
+somewhere those work (a normal login shell on the ai-host, or a unit). Doing the
 equivalent by hand needs a unit that outlives the command:
 
 ```bash
 systemd-run --user --unit=vllm-qwen3.8-exl3 --collect \
   --property=Type=oneshot --property=RemainAfterExit=yes \
-  bash -c 'cd <repo>/containers/b70/vllm-qwen3.8-exl3 && podman-compose -f docker-compose.yml up -d'
+  bash -c 'cd <repo>/containers/ai-host/vllm-qwen3.8-exl3 && podman-compose -f docker-compose.yml up -d'
 ```
 
 Making it a **boot-enabled** backend (so it comes up by itself like `hermes` /
 `glance`) is what `systemd.user.services.vllm-qwen38-exl3` in
-`hosts/b70-host/configuration.nix` does — see "Surviving a reboot" below.
+`hosts/ai-host/configuration.nix` does — see "Surviving a reboot" below.
 
 ## Surviving a reboot
 
-Declared in `hosts/b70-host/configuration.nix` as
+Declared in `hosts/ai-host/configuration.nix` as
 `systemd.user.services.vllm-qwen38-exl3` (`Type=oneshot`,
 `RemainAfterExit=true`, `wantedBy = default.target`, `ExecStartPre` guards the
 checkpoint, `TimeoutStartSec=900` for the cold JIT boot). It is the **only**
@@ -290,7 +312,7 @@ Two things worth knowing:
   started under a unit of that name rather than by hand.
 
 Applying it needs a rebuild (the declaration only takes effect after
-`sudo nixos-rebuild switch --flake .#b70-host`); until then the container keeps
+`sudo nixos-rebuild switch --flake .#ai-host`); until then the container keeps
 running only because it was started explicitly.
 
 ## Pair membership (memswap)
@@ -326,7 +348,7 @@ normal case here, not an exception. What that means:
 Swapping between the two members is a restart, not a sleep/wake:
 `scripts/vllm-swap-restart.sh qwen3.8-exl3` ↔ `... qwen3.8`.
 
-## Measured on `b70-host` (2026-09-28, one B70)
+## Measured on `ai-host` (2026-09-28, one B70)
 
 Cold boot **6.5 min**; warm (cache volume populated) **~2 min**. Two identical
 consecutive boots measured 6.5 → 2 min, which is the whole point of the
@@ -700,7 +722,7 @@ below was `hermes`):
 
 ```bash
 podman run --rm --entrypoint python3 \
-  "$(sed -n 's/^ *image: *//p' containers/b70/vllm-qwen3.8-exl3/docker-compose.yml)" -c \
+  "$(sed -n 's/^ *image: *//p' containers/ai-host/vllm-qwen3.8-exl3/docker-compose.yml)" -c \
   "import vllm.entrypoints.openai.tool_parsers as p,os;print(sorted(os.listdir(p.__path__[0])))"
 ```
 

@@ -67,6 +67,6 @@ curl -s -X POST "$API/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{"model":"hermes","messages":[{"role":"user","content":"Reply with exactly: PROXY-OK"}],"max_tokens":32}' \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print("  ", d["choices"][0]["message"]["content"] if "choices" in d else d)' \
-  || warn "  (chat completion failed — check podman logs litellm-b70 | grep hermes)"
+  || warn "  (chat completion failed — check podman logs litellm-ai-host | grep hermes)"
 
 log "done. '$MODEL_NAME' is pinned (no fallback); the hermes-agent keeps owning its own tool calls and memory."

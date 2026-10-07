@@ -1,7 +1,7 @@
 services:
   litellm-db:
     image: postgres:16-alpine
-    container_name: litellm-db-b70
+    container_name: litellm-db-ai-host
     restart: unless-stopped
     environment:
       POSTGRES_USER: litellm
@@ -17,7 +17,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: litellm-redis-b70
+    container_name: litellm-redis-ai-host
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -30,7 +30,7 @@ services:
 
   presidio-analyzer:
     image: mcr.microsoft.com/presidio-analyzer:latest
-    container_name: presidio-analyzer-b70
+    container_name: presidio-analyzer-ai-host
     restart: unless-stopped
     environment:
       - LOG_LEVEL=WARNING
@@ -42,7 +42,7 @@ services:
 
   presidio-anonymizer:
     image: mcr.microsoft.com/presidio-anonymizer:latest
-    container_name: presidio-anonymizer-b70
+    container_name: presidio-anonymizer-ai-host
     restart: unless-stopped
     environment:
       - LOG_LEVEL=WARNING
@@ -54,11 +54,11 @@ services:
 
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
-    container_name: litellm-b70
+    container_name: litellm-ai-host
     restart: unless-stopped
     labels:
       - "tsdproxy.enable=true"
-      - "tsdproxy.name=litellm-b70"
+      - "tsdproxy.name=litellm-ai-host"
     ports:
       - "4000:4000"
     extra_hosts:
@@ -97,7 +97,7 @@ services:
       MEMSWAP_URL: "http://host.docker.internal:8002"
       MEMSWAP_ENABLED: "${MEMSWAP_ENABLED:-false}"
       MEMSWAP_MEMBERS: "${MEMSWAP_MEMBERS:-qwen3.8:8000,nex-n2.5-mini:8003}"
-      MEMSWAP_STICKY: "${MEMSWAP_STICKY:-b70,local,auto-local}"
+      MEMSWAP_STICKY: "${MEMSWAP_STICKY:-ai-host,local,auto-local}"
       MEMSWAP_ENSURE_TIMEOUT_S: "${MEMSWAP_ENSURE_TIMEOUT_S:-2400}"
     volumes:
       - ./audit-data:/litellm/audit

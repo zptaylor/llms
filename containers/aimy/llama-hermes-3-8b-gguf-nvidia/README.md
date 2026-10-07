@@ -14,7 +14,7 @@ footprint, and the same 8 GB card can hold it alongside the KV cache when using
 quantized (q4_0) KV.
 
 The `-nvidia` suffix on the container name marks it as an **NVIDIA-card
-container** (see `containers/b70/README.md`): it runs GPU-accelerated only in
+container** (see `containers/ai-host/README.md`): it runs GPU-accelerated only in
 headless mode (`ai-headless`), where the 1070 is not driving a
 compositor.
 
@@ -25,7 +25,7 @@ display/compositing GPU (`card1`, X11/KWin via the `legacy_580` driver) with no
 container GPU runtime, so a CUDA container wasn't reachable — and compute would
 have stolen cycles from the desktop compositor.
 
-With the headless profile (`hosts/b70-host/headless.nix`) that changed:
+With the headless profile (`hosts/ai-host/headless.nix`) that changed:
 
 - The 1070 is no longer bound to a display/compositor (no X, no Wayland, no
   Plasma).
@@ -53,14 +53,14 @@ primary vLLM model.
 ## Prerequisites (headless host)
 
 - Host switched to `ai-headless` (NVIDIA driver + CDI: see
-  `hosts/b70-host/headless.nix`).
+  `hosts/ai-host/headless.nix`).
 - **Not** for desktop mode: the 1070 drives the display there.
 
 ## Service (managed by NixOS)
 
 This container is the declared owner of the shared 8010 port and runs as the
 `llama-hermes-3-8b` **systemd user service** (defined in
-`hosts/b70-host/configuration.nix`, wanted by `default.target`). It is
+`hosts/ai-host/configuration.nix`, wanted by `default.target`). It is
 started at boot and survives reboots — which is what the `HOST-B`/`qwen3.8`
 LiteLLM fallback chains rely on. The service guards on the GGUF being present
 and stays inactive (no crash loop) until `download-model.sh` has run.
@@ -77,7 +77,7 @@ service by design — see the "port 8010 is shared" note below.
 ## Manual quickstart (if the service is stopped)
 
 ```bash
-cd containers/b70/llama-hermes-3-8b-gguf-nvidia
+cd containers/ai-host/llama-hermes-3-8b-gguf-nvidia
 
 ./download-model.sh            # ~4.6 GiB, public, no token needed
 podman-compose up -d           # the service does this at boot; manual = one-off

@@ -44,7 +44,7 @@ This directory contains the Presidio ad‑hoc recognizer used by the LiteLLM pro
      > secrets-recognizer.json.enc
    ```
    - Replace `<AGE_PUBLIC_KEY>` with your age public key (e.g., `age1xxx...`).  
-   - If you don’t have one yet, see the project’s `.sops.yaml` (gitignored) for the cluster keys (`b70`, `HOST-E`, `HOST-D`, `HOST-Z`).  
+   - If you don’t have one yet, see the project’s `.sops.yaml` (gitignored) for the cluster keys (`ai-host`, `HOST-E`, `HOST-D`, `HOST-Z`).  
    - Commit `secrets-recognizer.json.enc`? **NO** — it is gitignored; keep it local or in your password store.
 
 4. **Decrypt locally for use**  
@@ -54,7 +54,7 @@ This directory contains the Presidio ad‑hoc recognizer used by the LiteLLM pro
    This overwrites the tracked `secrets-recognizer.json` with your real secrets.  
    Because the file is tracked, you should tell git to ignore further local changes:
    ```bash
-   git update-index --skip-worktree containers/b70/litellm/hooks/secrets-recognizer.json
+   git update-index --skip-worktree containers/ai-host/litellm/hooks/secrets-recognizer.json
    ```
    (Now your local real‑secret edits won’t appear in `git status` and won’t be accidentally committed.)
 

@@ -11,7 +11,7 @@
 # and a tunnel-down must not silently de-anonymize onto a direct backend.
 # Clients that need a guaranteed answer use a different group (e.g. 'free').
 #
-# Run on b70-host:  bash containers/b70/litellm/register-offload.sh
+# Run on ai-host:  bash containers/ai-host/litellm/register-offload.sh
 set -euo pipefail
 
 LITELLM_PORT="${LITELLM_PORT:-4000}"
@@ -30,7 +30,7 @@ command -v curl >/dev/null 2>&1 || die "curl required"
 # The gateway authenticates with OFFLOAD_ADMIN_KEY. Read it from the offload
 # .env (written by offload/setup-env.sh) so litellm's row can send it.
 OFFLOAD_ENV="$(cd "$(dirname "${BASH_SOURCE[0]}")/../offload" && pwd)/.env"
-[ -f "$OFFLOAD_ENV" ] || die "offload .env missing: $OFFLOAD_ENV (run containers/b70/offload/setup-env.sh first)"
+[ -f "$OFFLOAD_ENV" ] || die "offload .env missing: $OFFLOAD_ENV (run containers/ai-host/offload/setup-env.sh first)"
 OFFLOAD_ADMIN_KEY="$(grep -E '^OFFLOAD_ADMIN_KEY=' "$OFFLOAD_ENV" | cut -d= -f2-)"
 [ -n "$OFFLOAD_ADMIN_KEY" ] || die "OFFLOAD_ADMIN_KEY empty in $OFFLOAD_ENV"
 

@@ -164,7 +164,7 @@ def _read_db_row() -> dict | None:
         return None
     try:
         cp = subprocess.run(
-            ["podman", "exec", "litellm-db-b70", "psql", "-U", "litellm",
+            ["podman", "exec", "litellm-db-ai-host", "psql", "-U", "litellm",
              "-d", "litellm", "-tAc",
              'SELECT param_value FROM "LiteLLM_Config" '
              "WHERE param_name='router_settings'"],

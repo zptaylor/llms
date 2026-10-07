@@ -17,7 +17,7 @@ below is the reference set that must be present in the DB; exact
 |---|---|---|
 | `qwen3.8` | local vLLM `/model` :8000 (`vllm-qwen3.8-exl3`) | **pinned** primary local backend. No fallback at all — a down qwen3.8 surfaces the real error instead of silently serving another model |
 | `qwen3.8-65k` / `qwen3.8-96k` | same `openai//model` backend :8000 | **pinned aliases for pi**; 65536 / 98304 windows, no fallback (fail loudly). Registered by `register-qwen3.8-aliases.sh`. They named the retired GPTQ `-mult`/`-single` profiles; the backend that owns :8000 serves both unchanged |
-| `nex-n2.5-mini` | — | ⏹ **retired 2026-10-02** (`vllm-nex-n2.5-mini-sleep` moved to `containers/b70/.archive/`); a stale DB row should be removed with `/model/delete` |
+| `nex-n2.5-mini` | — | ⏹ **retired 2026-10-02** (`vllm-nex-n2.5-mini-sleep` moved to `containers/ai-host/.archive/`); a stale DB row should be removed with `/model/delete` |
 | `b70` | whichever Arc B70 member is awake — today always `qwen3.8` :8000 | **sticky group**: `vram_swap.py` rewrites the request to the member that owns the card before routing. With the pair retired the DB row points at :8000 and the coordinator stays passive (keep `MEMSWAP_ENABLED=false`) |
 | `local` | whichever local vLLM serves :8000 | interchangeable alias for local LLMs; **no cloud fallback** (privacy-pinned). Resolves to the `:8000` owner — the EXL3 engine, since the memswap pair was retired 2026-10-02 |
 | `HOST-B` | hermes' group: `hermes-3-8b` :8010 → `qwen3.8` :8000 | used by hermes-agent |
@@ -101,10 +101,10 @@ on the redis healthcheck via `depends_on`.
 - **pi / opencode:** `dotfiles/pi-agent/agent/models.json.tpl`,
   `dotfiles/.config/opencode/opencode.json.tpl` — model ids point at the proxy
   (both also carry a `hermes` id for the group above).
-- **hermes-agent:** `containers/b70/hermes-agent/hermes-config.yaml` uses
+- **hermes-agent:** `containers/ai-host/hermes-agent/hermes-config.yaml` uses
   `HOST-B` (and `orchestrator`). The reverse direction is the `hermes` group
   above: the agent is itself callable *through* the proxy, so clients that are
-  not on b70-host can use its memory/session/web-research tools. Its key is the SOPS
+  not on ai-host can use its memory/session/web-research tools. Its key is the SOPS
   secret `hermes_api_key`, written into `.env` as `HERMES_API_KEY` by
   `homes/USER/credentials.nix` (the row reads `os.environ/HERMES_API_KEY`).
   Re-register with `bash register-hermes.sh` (needs `LITELLM_MASTER_KEY`).

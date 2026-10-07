@@ -1,10 +1,10 @@
-# b70-llm-containers
+# llms (public mirror)
 
 Auto-mirrored (redacted) subset of the private `nixos-config` repo: the
 Podman containers that serve local LLM inference on an Intel Arc B70, plus
 the host-side vLLM build tree.
 
-- Last synced from private commit `b9db9f45aa33`.
+- Last synced from private commit `94c46c05d798`.
 - How: `scripts/sync-public/sync-public-repo.sh` in the private repo runs a
   deterministic redactor (`scripts/sync-public/redact.py`) and pushes only
   when the redacted tree changes (idempotent — a no-op run commits nothing).
@@ -12,8 +12,8 @@ the host-side vLLM build tree.
   the source host. No secrets or private identifiers should be present.
 
 Synced paths:
-  - `containers/b70/vllm-qwen3.8-exl3`
-  - `containers/b70/llama-hermes-3-8b-gguf-nvidia`
-  - `containers/b70/litellm`
-  - `containers/b70/memswap`
+  - `containers/aimy/vllm-qwen3.8-exl3`
+  - `containers/aimy/llama-hermes-3-8b-gguf-nvidia`
+  - `containers/aimy/litellm`
+  - `containers/aimy/memswap`
   - `vllm-qwen38`
