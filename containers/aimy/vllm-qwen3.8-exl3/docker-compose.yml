@@ -29,14 +29,14 @@ services:
       - --model-path
       - /model
       - --set
-      # 2026-10-06: 0.94 -> 0.965 (the trellis-serve recipe value), after the
-      # vllm-qwen3.8-exl3-recipe-test run measured a clean boot + serve there:
-      # 11.02 GiB of KV / 327,301-token pool vs 10.42 GiB / 303,056 at 0.94,
-      # with acceptance (1.6-1.7), tool calls (40/40) and tok/s unchanged.
-      # This retires the "0.965 OOMs, keep <= 0.94" note in README.md, which
-      # predates the 2026-10-02 sleep-pair retirement (a clean card). Rollback:
-      # this one line back to 0.94 + recreate.
-      - vllm.gpu_memory_utilization=0.965
+      # 2026-10-07: 0.965 -> 0.94. The recipe-test boot at 0.965 was clean
+      # (11.22 GiB KV / 327,301 tokens vs 10.42 GiB / 303,056 at 0.94), but
+      # under real traffic the engine died after 2h20m with
+      # UR_RESULT_ERROR_OUT_OF_DEVICE_MEMORY in a large prefill while the KV
+      # pool sat at ~15%: 0.965 leaves only ~1.1 GiB of the 31.89 GiB card
+      # outside the reserve, under the real peak-activation + non-torch
+      # demand. 0.94 restores ~1.9 GiB of slack. Rollback: back to 0.965.
+      - vllm.gpu_memory_utilization=0.94
       - --set
       - vllm.max_model_len=262144
       - --set

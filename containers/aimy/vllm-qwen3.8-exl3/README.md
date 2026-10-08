@@ -19,10 +19,13 @@ native **262144** window, verified through the proxy for `qwen3.8`, `local`,
 `b70`, `qwen3.8-65k`, `auto` and `qwen3.8-exl3`. **Tool calling verified**
 (32/32 assertions, raw and through the proxy). **MTP speculative decoding is ON
 at k=1** since 2026-10-02 (it was off from 2026-09-30 — see that section for the
-KV pool it costs and the +59 % it buys): `GPU KV cache size: 327,301 tokens`, so
-one full 262,144-token session still fits (1.25×). `gpu_memory_utilization` is
-**0.965** (the trellis-serve recipe value) since 2026-10-06 — the A/B that moved
-it there is `../vllm-qwen3.8-exl3-recipe-test/`. Boot **~6.5 min cold / ~2 min
+KV pool it costs and the +59 % it buys): `GPU KV cache size: 303,056 tokens` at
+`0.94`, so one full 262,144-token session still fits (1.16×).
+`gpu_memory_utilization` is **`0.94`** again since **2026-10-07**: rolled back
+from the recipe's `0.965` after a production prefill OOM'd the device
+(`UR_RESULT_ERROR_OUT_OF_DEVICE_MEMORY` — at 0.965 only ~1.1 GiB sits outside the
+reserve, less than a large prefill's activation peak). The `0.965` A/B that moved
+it there on 2026-10-06 is `../vllm-qwen3.8-exl3-recipe-test/`. Boot **~6.5 min cold / ~2 min
 warm**. It is **boot-enabled** — see "Surviving a reboot". Measured throughput
 and the surprises found on the way: "Measured on ai-host" + "Traps" below. Rollback
 is one command — see "Rollback".
@@ -66,16 +69,16 @@ and `max_num_batched_tokens` — each with its own reasoning comment there.)
 
 | Profile | `vllm.gpu_memory_utilization` | `vllm.max_model_len` | Notes |
 |---|---|---|---|
-| **live default** | `0.965` | `262144` | The model's full native window, and what is deployed (the recipe's own value; moved `0.94 → 0.965` on 2026-10-06, `../vllm-qwen3.8-exl3-recipe-test/`). Needs a **clean** card (the swap script removes the incumbent first). Measured 2026-10-06: `Available KV cache memory: 11.22 GiB`, `GPU KV cache size: 327,301` (1.25×), `k=1`. Recipe's proven boundary: a 261,920-token prompt answered correctly, fp8 KV pool 287,040 tokens — reproduced here exactly at `0.94`. |
+| **live default** | `0.94` | `262144` | **What is deployed since 2026-10-07** (rolled back from `0.965`): the model's full native window, `10.42 GiB`, `GPU KV cache size: 303,056` (1.16×), `k=1`, and **1.91 GiB of headroom** outside the reserve. The `0.965` profile measured +0.6 GiB more KV on a clean card but OOM'd the device on a production prefill. |
 | co-tenant-safe | `0.90` | `65536` | The recipe's served default, for a card that is NOT clean. At 0.90 the KV budget cannot cover 262144 (measured: 9.1 GiB available vs 9.29 GiB needed, engine reports max 256000). |
-| rollback | `0.94` | `262144` | What this container ran 2026-09-28 → 2026-10-06: `10.42 GiB`, `GPU KV cache size: 303,056` (1.16×). The old "`0.965` OOMs" rule; one line in the compose plus a recreate to go back. |
+| 0.965 A/B (not deployed) | `0.965` | `262144` | The trellis-serve recipe value, deployed 2026-10-06 → 2026-10-07. Measured then on a clean card: `11.22 GiB`, `GPU KV cache size: 327,301` (1.25×). **OOM'd the device under real prefill traffic on 2026-10-07** (`UR_RESULT_ERROR_OUT_OF_DEVICE_MEMORY` — ~1.1 GiB outside the reserve is not enough). One line in the compose plus a recreate moves either way; recipe boundary and raw numbers: `../vllm-qwen3.8-exl3-recipe-test/`. |
 
 **The window and the batch budget are coupled.** 262144 fits only because
 `max_num_batched_tokens` is back at the recipe's **4096**: raising it to 8192
 inflates the *vision encoder cache* enough that the budget check fails again
 (measured at `0.94`: 9.29 GiB needed vs 9.1 GiB available). If you raise one,
-expect to lower the other. The `0.965` pool carries ~0.8 GiB more slack than the
-`0.94` one did, so batch8192 *may* now fit — **not re-measured**; the A/B that
+expect to lower the other. The `0.965` pool carried ~0.8 GiB more slack than the
+`0.94` one, so batch8192 *may* now fit — **not re-measured**; the A/B that
 moved the memory fraction deliberately held every other knob fixed.
 
 Re-measured 2026-10-02 **with MTP k=1** (`scripts/vllm-exl3-ab.sh apply batch8192`):
@@ -88,16 +91,19 @@ that buys prefill/activation budget only, and it leaves the prefix cache (72.5 %
 hit on agent transcripts) nothing to work with — so it is **not** the config to
 land. The batch-token cost dominates: the shrunk mm budget only partly offsets it.
 
-`model.yaml` ships `0.965` + `262144`, and **`0.965` is what is deployed since
-2026-10-06** — the earlier "`0.965` OOMs, keep `≤ 0.94`" note here was wrong for
-the current clean card. Measured on 2026-10-06: it boots and serves at `0.965`
+`model.yaml` ships `0.965` + `262144`, but the **compose overrides the fraction
+back to `0.94`** — the deployed value again since **2026-10-07**, because the
+2026-10-06 `0.965` deployment OOM'd the device under a production prefill (see
+Status). The earlier "`0.965` OOMs, keep `≤ 0.94`" note here was right for a loaded engine; it did boot and serve on a clean card
+(measured 2026-10-06), but not under real prefill traffic. Measured then: it boots and serves at `0.965`
 with `Available KV cache memory: 11.22 GiB` / `GPU KV cache size: 327,301`,
 against 10.42 GiB / 303,056 at `0.94` — i.e. +0.6 GiB of KV and +8.0 % of pool.
 The old measurement's premise (a startup footprint of ~29.5/31.9 GiB) predates
 the 2026-10-02 retirement of the sleep pair: with a co-tenant's weights no longer
 resident, `0.965` fits. Raw numbers and the confounds:
-`../vllm-qwen3.8-exl3-recipe-test/TEST-PLAN.md`. The `≤ 0.94` figure is now only
-the rollback line — one edit in this repo's compose plus a recreate. That is a
+`../vllm-qwen3.8-exl3-recipe-test/TEST-PLAN.md`. The `≤ 0.94` figure is the
+deployed profile again — one edit in this repo's compose plus a recreate moves
+either way. That is a
 different
 rule from the `0.82` ceiling documented for the GPTQ siblings in
 `../README.md`: that ceiling exists because *their* recipe's cudagraph capture

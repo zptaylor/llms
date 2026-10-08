@@ -1,6 +1,8 @@
 services:
   litellm-db:
-    image: postgres:16-alpine
+    # Pinned to a full version (was `16-alpine`, moved 2026-10-08): patch
+    # updates stay same-major and the pin stops silent drift on :16-alpine.
+    image: postgres:16.15-alpine3.23
     container_name: litellm-db-ai-host
     restart: unless-stopped
     environment:
@@ -16,7 +18,8 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    # Pinned to a full version (was `7-alpine`, moved 2026-10-08).
+    image: redis:7.4.11-alpine3.21
     container_name: litellm-redis-ai-host
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
