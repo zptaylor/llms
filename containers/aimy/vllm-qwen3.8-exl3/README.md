@@ -26,7 +26,8 @@ from the recipe's `0.965` after a production prefill OOM'd the device
 (`UR_RESULT_ERROR_OUT_OF_DEVICE_MEMORY` — at 0.965 only ~1.1 GiB sits outside the
 reserve, less than a large prefill's activation peak). The `0.965` A/B that moved
 it there on 2026-10-06 is `../vllm-qwen3.8-exl3-recipe-test/`. Boot **~6.5 min cold / ~2 min
-warm**. It is **boot-enabled** — see "Surviving a reboot". Measured throughput
+warm** (MTP off; **with MTP on it stalls >26 min in the drafter** — see the note
+below). It is **on demand since 2026-10-12** — see "Surviving a reboot". Measured throughput
 and the surprises found on the way: "Measured on ai-host" + "Traps" below. Rollback
 is one command — see "Rollback".
 
@@ -282,19 +283,20 @@ systemd-run --user --unit=vllm-qwen3.8-exl3 --collect \
   bash -c 'cd <repo>/containers/ai-host/vllm-qwen3.8-exl3 && podman-compose -f docker-compose.yml up -d'
 ```
 
-Making it a **boot-enabled** backend (so it comes up by itself like `hermes` /
-`glance`) is what `systemd.user.services.vllm-qwen38-exl3` in
-`hosts/ai-host/configuration.nix` does — see "Surviving a reboot" below.
+It **was** the boot-enabled backend until 2026-10-12, when
+`vllm-qwen38-exl3-abliterated` took that role; `systemd.user.services.vllm-qwen38-exl3`
+in `hosts/ai-host/configuration.nix` now has no `wantedBy` — see "Surviving a reboot".
 
 ## Surviving a reboot
 
 Declared in `hosts/ai-host/configuration.nix` as
-`systemd.user.services.vllm-qwen38-exl3` (`Type=oneshot`,
-`RemainAfterExit=true`, `wantedBy = default.target`, `ExecStartPre` guards the
-checkpoint, `TimeoutStartSec=900` for the cold JIT boot). It is the **only**
-boot-enabled `vllm-*` backend in this repo — every other one is deliberately
-started by hand, because only one engine can own the card and *which* one is a
-choice. This unit makes the choice explicit: **after a reboot EXL3 owns
+`systemd.user.services.vllm-qwen38-exl3` (`Type=oneshot`, `RemainAfterExit=true`,
+`ExecStartPre` guards the checkpoint, `TimeoutStartSec=900` for the cold JIT
+boot). **Since 2026-10-12 it has no `wantedBy`**: the boot default is
+`vllm-qwen38-exl3-abliterated`, and the two carry reciprocal `Conflicts=`, so
+starting either hands the card over. Exactly one `vllm-*` backend is boot-enabled
+at a time, on purpose — only one engine can own the card and *which* one is a
+choice. The choice today: **after a reboot the abliterated EXL3 owns
 `:8000`.**
 
 Enable/disable and verify:
@@ -356,7 +358,28 @@ Swapping between the two members is a restart, not a sleep/wake:
 
 ## Measured on `ai-host` (2026-09-28, one B70)
 
-Cold boot **6.5 min**; warm (cache volume populated) **~2 min**. Two identical
+Cold boot **6.5 min**; warm (cache volume populated) **~2 min**.
+
+> **On-demand since 2026-10-12.** The boot default is now
+> `../vllm-qwen3.8-exl3-abliterated/` (same engine, abliterated checkpoint, ~2x
+> prefill at depth); this unit keeps its own `Conflicts=` so starting it hands the
+> card back. Its `wantedBy` was dropped so a rebuild can no longer swap the engine
+> silently (which it did, 2026-10-12).
+>
+> **2026-10-12, MTP-on boots are far slower than that.** With
+> `vllm.speculative_config.num_speculative_tokens=1` this engine stalls in the
+> drafter load — one core pegged, log frozen after
+> `exl3: MTP draft head uses 512 of 1940 vocab blocks (26.4% of lm_head)` and
+> `Loading drafter model...` — and had not finished after **26 minutes** on a warm
+> cache (the run was stopped; whether it completes is unproven). With
+> `vllm.speculative_config=null` the same container was **healthy in 105 s** and
+> served a 376,253-token pool. So the 6.5/2 min figures above predate the drafter
+> and the draft-vocab pruning. This matters beyond benchmarking: this unit is the
+> engine *was* the boot default until 2026-10-12; the promoted abliterated engine
+> does not carry `draft_vocab` pruning and boots in ~2 min **with** MTP.
+> `../vllm-qwen3.8-exl3-abliterated/` has the same engine and same speed class
+> *with* MTP and boots in ~2 min, because its composed checkpoint carries a stock
+> 4 bpw MTP head and no `draft_vocab.json` (no pruning step) — see its README. Two identical
 consecutive boots measured 6.5 → 2 min, which is the whole point of the
 `vllm-exl3-vllm-cache` volume below.
 

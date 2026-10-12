@@ -150,3 +150,20 @@ curl -s http://127.0.0.1:4000/model/new \
 - The 3B container (`llama-hermes-3-3b-gguf-nvidia`) remains available as a
   lighter fallback if the 8B ever needs to be stopped; LiteLLM's `HOST-B` group
   prefers the 8B now.
+
+## The NVIDIA CDI race (2026-10-12)
+
+`nvidia.com/gpu=all` is resolved through the CDI spec that
+`nvidia-container-toolkit-cdi-generator` rewrites on **every** activation — and
+`nixos-rebuild switch` restarts the generator *and* this container's unit in the
+same pass. Starting immediately, podman finds no spec yet and dies with
+`unresolvable CDI devices nvidia.com/gpu=all`; because the unit is a *user* unit,
+the whole switch then ends `status=4/NOPERMISSION` and this service stays down
+(measured: the unit failed at 12:47:32, the spec was written at 12:48).
+
+The unit therefore carries a bounded `ExecStartPre` wait
+(`wait-for-nvidia-cdi`, 60 s) that passes as soon as
+`/etc/cdi/nvidia-container-toolkit.json` exists and names the device, and fails
+loudly with a pointer to the generator if it never appears. Guard:
+`scripts/test-support/test-nvidia-cdi-wait.py` fails any unit that starts a
+CDI-requesting compose without such a wait.

@@ -1,11 +1,16 @@
+# ON-DEMAND SWAP-IN since 2026-10-12: the engine that owns :8000 after a boot is
+# now ../vllm-qwen3.8-exl3-abliterated/ (its unit is `wantedBy = default.target`;
+# this one's unit lost its `wantedBy`). No tsdproxy labels on any :8000 owner — the
+# tailnet name `qwen3-8-exl3-ai-host` is a static list
+# (containers/ai-host/tsdproxy/vllm.yaml → http://127.0.0.1:8000), so it tracks
+# whichever engine currently holds the port. Start this one by hand for the stock
+# weights:
+#   systemctl --user start vllm-qwen38-exl3   (its Conflicts= stops the others)
 services:
   vllm-qwen3.8-exl3:
     image: ghcr.io/0xsero/exl3xpu@sha256:21412bdd7535e9c653eeb3d099dce3bc79a83d440def2cd9556111c79c870fa8
     container_name: vllm-qwen3.8-exl3
     restart: "no"
-    labels:
-      - "tsdproxy.enable=true"
-      - "tsdproxy.name=qwen3-8-exl3-ai-host"
     ports:
       - "8000:8000"
     devices:
