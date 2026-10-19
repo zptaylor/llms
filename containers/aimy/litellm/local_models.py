@@ -50,10 +50,20 @@ SMALL_GROUPS = (
     "HOST-B",
 )
 
+# The NVIDIA GTX 1070 engine (Ling-3.0-tiny, 8 GB, one slot) --
+# containers/ai-host/llama-ling-3-tiny-gguf-nvidia. It is NOT a B70 group and must
+# stay out of PRIMARY_GROUPS/COMPRESS_GROUPS: no fallback chain may land a B70
+# request on the card, and the compression hook must never fire on a child.
+# It is the `delegation` child target (see hermes-agent docs).
+NVIDIA_GROUPS = ("ling-3.0-tiny",)
+
 DEFAULT_BACKEND_WINDOW = 262144
 BACKEND_WINDOW: dict[str, int] = {
     "qwen3.8-65k": 65536,
     "qwen3.8-96k": 98304,
+    # 132K deployed (trained 131072 + --override-kv), not the 262144 default:
+    # the child context budget is checked against this number.
+    "ling-3.0-tiny": 135168,
 }
 
 
@@ -84,6 +94,8 @@ def is_primary_group(model: object) -> bool:
     """
     if not isinstance(model, str):
         return False
+    if model in NVIDIA_GROUPS:
+        return False
     return model in PRIMARY_GROUPS or model.startswith("qwen3.8")
 
 
@@ -91,6 +103,6 @@ def should_compress(model: object) -> bool:
     """True if the compression pre-call hook should consider this request."""
     if not isinstance(model, str):
         return False
-    if model in SMALL_GROUPS:
+    if model in SMALL_GROUPS or model in NVIDIA_GROUPS:
         return False
     return model in COMPRESS_GROUPS or model.startswith("qwen3.8")

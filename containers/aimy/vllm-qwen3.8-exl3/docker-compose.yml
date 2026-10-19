@@ -49,11 +49,24 @@ services:
       - --set
       - vllm.max_num_batched_tokens=4096
       - --set
+      # 2 since 2026-10-18 (was 1; never back to the engine default 16):
+      # VLLM-007 showed 16 admits two long contexts, pins KV at 96.5 % and
+      # collapses decode to 0.4-0.6 tok/s. But 1 serialises a second consumer
+      # even at ~10 % KV (VLLM-013). 2 lets it decode; the window is still
+      # 262,144, so two near-full-length sessions can preempt (VLLM-008:
+      # 2 x 163,840 = 327,680 > 301,541). Watch num_preemptions_total and
+      # waiting_by_reason{capacity}; roll back to 1 if preemptions appear.
+      # ../litellm's max_parallel_requests=2 matches this. The abliterated and
+      # mixedk on-demand composes stay at 1 until re-measured.
+      - vllm.max_num_seqs=2
+      - --set
       - vllm.speculative_config.num_speculative_tokens=1
       # MTP is ON at k=1 (2026-10-02; was `vllm.speculative_config=null` since 2026-09-30).
       # The recipe ships k=3, but with mtp_num_hidden_layers=1 vLLM re-runs the same MTP layer
       # once per draft, which is what collapsed acceptance in long sessions here.
-      # Rollback: put this line back to vllm.speculative_config=null.
+      # k=2 was measured on 2026-10-16 and REVERTED: 58/375 intervals collapsed to 0% draft
+      # acceptance (vs 1/320 at k=1) and busy-interval decode fell 34.7 -> 28.6 tok/s, even
+      # though the synthetic repetitive cell read 81 vs 56 tok/s. Do not re-try k>1.
       # prefix caching is ON via the image's model.yaml; to trade it off use --set vllm.enable_prefix_caching=false
       - "--"
       # no `--disable-log-requests` here: this image dropped it (and has no unrecognized-arg fallback),

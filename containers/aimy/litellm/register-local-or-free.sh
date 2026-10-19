@@ -24,7 +24,11 @@ resp="$(curl -s -X POST "$ADMIN_API" \
     \"litellm_params\": {
       \"model\": \"openai//model\",
       \"api_base\": \"http://host.docker.internal:8000/v1\",
-      \"api_key\": \"sk-no-key-required\"
+      \"api_key\": \"sk-no-key-required\",
+      \"max_parallel_requests\": 2,
+      \"timeout\": 1800,
+      \"stream_timeout\": 1800,
+      \"num_retries\": 2
     },
     \"model_info\": {
       \"fallbacks\": [\"local\", \"free\"]

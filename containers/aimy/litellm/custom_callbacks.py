@@ -57,6 +57,7 @@ from litellm.types.utils import ModelResponse, ModelResponseStream
 from typing import Any, AsyncGenerator, Optional
 
 import local_models as _local_models
+import output_cap as _output_cap
 
 _MAX_TOOL_RETRIES = 3
 _tool_retry_ctx: contextvars.ContextVar[int] = contextvars.ContextVar(
@@ -66,6 +67,22 @@ _tool_retry_ctx: contextvars.ContextVar[int] = contextvars.ContextVar(
 _LEAKED_TAIL_RE = re.compile(
     r"</(?:tool_call|function|parameter)>\s*$|<(?:parameter|function)=[^<>]*>\s*$"
 )
+
+
+def _saturation_error(message: str) -> Exception:
+    """A refusal the client can act on: 429 while the engine is saturated.
+
+    Degrades to a plain RuntimeError if this LiteLLM build does not expose the
+    exception class -- either way the caller sees the message, not a hang.
+    """
+    try:
+        from litellm.exceptions import RateLimitError
+
+        return RateLimitError(
+            message=message, model="qwen3.8", llm_provider="openai"
+        )
+    except Exception:
+        return RuntimeError(message)
 
 
 class AsyncPrependServedModel(CustomLogger):
@@ -131,6 +148,17 @@ class AsyncPrependServedModel(CustomLogger):
                 )
         except Exception:
             pass
+        # Cap the output at what the :8000 KV pool can actually hold, but only
+        # for requests that resolve to it (local_models.is_primary_group).
+        if isinstance(data, dict) and _local_models.is_primary_group(
+            data.get("model")
+        ):
+            try:
+                _output_cap.apply(data)
+            except _output_cap.Saturated as exc:
+                raise _saturation_error(str(exc)) from None
+            except Exception:
+                pass
         return data
 
     @staticmethod

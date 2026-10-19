@@ -52,7 +52,7 @@ for pair in "${ALIASES[@]}"; do
   window="${pair##*:}"
 
   if printf '%s\n' "$existing" | grep -qx "$name"; then
-    log "alias '$name' already registered — leaving it unchanged."
+    log "alias '$name' already registered — leaving it unchanged (run apply-engine-guards.sh to enforce the :8000 guards)."
     continue
   fi
 
@@ -65,7 +65,11 @@ for pair in "${ALIASES[@]}"; do
       \"litellm_params\": {
         \"model\": \"openai//model\",
         \"api_base\": \"http://host.docker.internal:8000/v1\",
-        \"api_key\": \"sk-no-key-required\"
+        \"api_key\": \"sk-no-key-required\",
+        \"max_parallel_requests\": 2,
+        \"timeout\": 1800,
+        \"stream_timeout\": 1800,
+        \"num_retries\": 2
       },
       \"model_info\": {
         \"max_input_tokens\": $((window - 8192)),

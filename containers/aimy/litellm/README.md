@@ -28,6 +28,7 @@ below is the reference set that must be present in the DB; exact
 | `auto` | local vLLM `qwen3.8` :8000 | falls back openrouter → deepseek; on a **context-window-exceeded** it falls to `hermes-3-8b` (see the escape note below) |
 | `free` | OpenRouter top-5 free router ($0) | falls back across all `*-free` models below |
 | `deepseek` / `deepseek-reasoner` | `deepseek/deepseek-chat` / `-reasoner` | primary DeepSeek (chat) / reasoning (surfaces `reasoning_content`) |
+| `deepseek-flash` / `deepseek-pro` | official DeepSeek API: `deepseek/deepseek-flash` / `deepseek/deepseek-v4-pro` | **latest official models**: V4.1-Flash (1,048,576 ctx, 393,216 max output, text+image, effort low/high/max) and V4-Pro (same window, text). Registered by `register-deepseek.sh`; Reasonix defaults to `deepseek-flash` through this proxy |
 | `openrouter` | `openrouter/qwen/qwen3-coder` | cloud |
 | `nv-*` (8 rows) | NVIDIA NIM `https://integrate.api.nvidia.com/v1` | NVIDIA-hosted: `nv-deepseek-v4-flash`/`-pro`, `nv-gpt-oss-20b`, `nv-nemotron-lightning`/`-super`/`-ultra`, `nv-llama-11b-vision`. All 128K ctx; the vision row accepts images. Seeded by `register-nvidia-free.sh` (idempotent; only models returning 200 for the account's key) |
 
@@ -62,6 +63,15 @@ models API, pick the top-5 by quality, update the DB row).
 
 ## Model store (database)
 
+- **Official DeepSeek models:** `bash register-deepseek.sh` registers
+  `deepseek-flash` (V4.1-Flash) and `deepseek-pro` (V4-Pro) from the official
+  API. It is idempotent and uses `DEEPSEEK_API_KEY` from this dir's `.env`.
+- **Container DNS:** rootless aardvark (`10.89.6.1`) resolves compose service
+  names but its cached upstream goes stale when the host's resolver changes
+  (Tailscale MagicDNS). The symptom is `socket.gaierror: [Errno -3] Temporary
+  failure in name resolution` for every cloud model while local names still
+  work. The compose pins `dns: [10.89.6.1, 100.x.x.x]` so both internal
+  names and external APIs resolve; do not drop either entry.
 - **Add/update/delete models:** `POST /model/new`, `/model/update`,
   `/model/delete` (or the Admin UI at `/ui`), e.g.
   `curl -X POST http://localhost:4000/model/new -H 'Authorization: Bearer $LITELLM_MASTER_KEY' -H 'Content-Type: application/json' -d '{...}'`.
@@ -96,11 +106,86 @@ host: redis, port: 6379, db: 0}`). It is internal-only (not published) and
 persists AOF data to `./redis-data` (gitignored). The litellm container waits
 on the redis healthcheck via `depends_on`.
 
+## Output cap (per-request, from the live KV pool)
+
+`output_cap.py` plus the pre-call hook in `custom_callbacks.py` bound every
+request that resolves to the `:8000` engine (`local_models.is_primary_group`).
+The engine does not bound output itself and no client sets `max_tokens`
+consistently, so one runaway generation holds the whole pool and preempts
+everything behind it — measured 2026-10-13: two requests decoded at ~38 tok/s
+for hours with `request_success_total` frozen, which the 20 s pressure probe
+calls OK on every tick.
+
+At request time the proxy reads the pool from the engine's own metrics
+(`vllm:cache_config_info{kv_cache_size_tokens=…}`, memoized 2 s) and tokenizes
+the prompt through `/tokenize` (never estimated, and **including the `tools`
+schemas** — the engine counts them; a budget built without them lands over the
+window: 62 vs 4,159 tokens for the same messages with a 19,788-byte tools array,
+which answered four hermes requests with `ContextWindowExceededError` on
+2026-10-15), then sends
+`max_tokens = min(the client's own, pool − prompt − margin, VLLM_OUTPUT_CAP_MAX)`,
+tightened by live occupancy **only while another request is running**: with
+`max_num_seqs=2` a request that arrives while a sibling is actually decoding is
+charged for it, while a merely queued request is not charged for a sibling that
+will finish before it runs. The absolute ceiling is load-bearing, not tuning:
+the dynamic term alone resolves to `window − prompt` for a client that sends no
+`max_tokens`, i.e. ~250K output tokens, and one such turn held the only sequence
+slot for 78+ minutes (2026-10-15) while everything else queued behind it. Below
+the floor the request is refused with a 429 rather than truncated — the engine is
+saturated, and a retry is the useful answer. Any unreadable metric leaves the
+request exactly as the client sent it (the cap fails open; a cap that breaks
+traffic is worse than one that misses a request).
+
+| env (`docker-compose.yml`) | default | meaning |
+|---|---|---|
+| `VLLM_OUTPUT_CAP` | `1` | `0` disables the cap without a code change |
+| `VLLM_OUTPUT_CAP_MARGIN` | `2048` | tokens kept free beyond the prompt |
+| `VLLM_OUTPUT_CAP_FLOOR` | `1024` | output budget below this → 429 |
+| `VLLM_OUTPUT_CAP_MAX` | `8192` | absolute ceiling on one generation (`0` = off) |
+| `VLLM_ENGINE_BASE` | `http://host.docker.internal:8000` | the capped engine |
+
+Pool-independent by design: swapping the `:8000` owner (abliterated / stock /
+mixedk / davetha) needs no edit here, and no pool number is hardcoded. Guard:
+`scripts/test-support/test-litellm-output-cap.py`.
+
+## Engine guards (concurrency, timeout, retries)
+
+`apply-engine-guards.sh` keeps every DB deployment whose `api_base` targets
+`:8000` on the same bouncer, including rows registered by hand. It is
+idempotent; `--check` reports drift without changing anything.
+
+| Setting | Value | Why |
+|---|---|---|
+| `max_parallel_requests` | `2` | A third concurrent call gets a 429 **before** any provider call, then the router retries it. Without it nothing bounds concurrency at the proxy and a burst piles into vLLM's scheduler. |
+| `timeout` / `stream_timeout` | `1800` | vLLM never times out a request, so a dead turn would hold one of the engine's two sequence slots indefinitely. 30 min covers a full-window prefill plus the 8192-token output cap (~13 min measured) with margin. |
+| `num_retries` | `2` | Three attempts. LiteLLM's router owns retries and pins the provider SDK's `max_retries` to `0`, so set `num_retries`, not `max_retries`. Backoff is exponential (0.5 s, 1 s, … capped at 8 s) plus jitter; a local 429 has no `Retry-After`, so this is the whole wait. |
+
+Each alias (`qwen3.8`, `qwen3.8-65k`, `qwen3.8-96k`, `auto`, `b70`, `local`,
+`qwen3.8-exl3`) is a separate deployment with its own counter, so the cap is
+per alias, not per engine — clients should share one group. The engine itself
+runs `max_num_seqs=2` since 2026-10-18 (`../vllm-qwen3.8-exl3/docker-compose.yml`),
+matching the proxy cap; its pool at 2 is 301,541 tokens, so one full 262,144
+window still fits. Two near-full-length sessions can still preempt — watch
+`num_preemptions_total`.
+
+The register scripts seed the same values on new rows. Re-run the guard script
+after adding a `:8000` alias:
+
+```bash
+bash apply-engine-guards.sh --check   # drift report
+bash apply-engine-guards.sh           # apply to every :8000 row
+```
+
 ## Client wiring
 
 - **pi / opencode:** `dotfiles/pi-agent/agent/models.json.tpl`,
   `dotfiles/.config/opencode/opencode.json.tpl` — model ids point at the proxy
   (both also carry a `hermes` id for the group above).
+- **Reasonix:** `dotfiles/reasonix/config.toml.tpl` points the `deepseek-flash`
+  and `deepseek-pro` providers at this proxy (`ai-host.<tailnet>:4000/v1`, rendered
+  by `dotfiles-sync.sh`); the client key is `LITELLM_API_KEY` in
+  `~/.reasonix/.env`, written from the `pi_litellm_api_key` SOPS secret by
+  `homes/USER/credentials.nix`.
 - **hermes-agent:** `containers/ai-host/hermes-agent/hermes-config.yaml` uses
   `HOST-B` (and `orchestrator`). The reverse direction is the `hermes` group
   above: the agent is itself callable *through* the proxy, so clients that are
@@ -121,6 +206,15 @@ on the redis healthcheck via `depends_on`.
 > **Guardrails:** `config.yaml` guardrails: (Presidio + regex) mask
 > PII/PHI on all traffic and rehydrate it in responses — including inbound
 > NVIDIA rows.
+>
+> **Credential masking:** both guardrails carry the same regex set — the
+> `litellm_content_filter` `patterns` in `config.yaml` and Presidio's
+> `hooks/secrets-recognizer.json` — covering password/passphrase assignments,
+> env-style secrets, `--token` flags, `scheme://user:pass@` strings,
+> bearer/JWT tokens, private-key blocks and common API-key prefixes.
+> `scripts/test-support/test-litellm-credential-patterns.py` keeps the two
+> lists identical and exercises each regex. Presidio bypasses routes ending in
+> `-unprotected` by design.
 
 Usage:
 

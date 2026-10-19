@@ -12,7 +12,28 @@ the sleep-mode pair and `-heretic` were **retired into
 Recipe: `SergiioB/intel-arc-pro-b70-inference-cookbook`,
 `docs/qwen38-27b/EXL3-XPU.md` @ `530ae03`.
 
-## STATUS — live on `ai-host` since 2026-09-28
+## STATUS — live on `ai-host` since 2026-09-28; **boot default again since 2026-10-14**
+
+> **Promoted back 2026-10-14** (default until 2026-10-12, then on-demand behind
+> the abliterated engine, now the default again — the non-abliterated
+> checkpoint). Measured on the card that day with MTP k=1 + `max_num_seqs 1` +
+> batch 4096: **130 s to serve**, `GPU KV cache size: 303,056` (1.16× of
+> 262,144; **301,541 = 1.15×** once `max_num_seqs=1` is in effect — the
+> cudagraph/activation footprint moves by ~1.5K tokens), gate PASS, **48.3 tok/s**
+> mean over the prose/code/agent cells
+> (49.7 / 48.5 / 46.6, accept_len 1.65–1.73). The "MTP-on boots stall >26 min in
+> the drafter" note below did **not** reproduce: the same drafter line
+> (`MTP draft head uses 512 of 1940 vocab blocks`) is logged and passed in ~2 s,
+> so the stall is recorded as the 2026-10-12 cold-cache event it was, not a
+> property of this checkpoint. What *did* reproduce is the evict/re-prefill
+> livelock at the engine default `max_num_seqs 16`: two long concurrent requests
+> drove KV to 96.5% and decode to 0.4–0.6 tok/s. The compose pinned
+> `max_num_seqs=1` from 2026-10-14 until **2026-10-18**, when it moved to **2**:
+> the pool is **301,541 tokens** at 2 (1.15×), a clean 2-concurrent probe
+> (2 × 45,062-token prompts) held `Running: 2`, peaked at 60.6 % KV and logged
+> **0 preemptions**, and both turns completed. Two near-full-length sessions
+> can still preempt — watch `num_preemptions_total` and
+> `waiting_by_reason{capacity}`, and roll back to 1 if they move. VLLM-025.
 
 Running as the `:8000` backend, serving model id **`/model`** at the model's
 native **262144** window, verified through the proxy for `qwen3.8`, `local`,
@@ -70,7 +91,7 @@ and `max_num_batched_tokens` — each with its own reasoning comment there.)
 
 | Profile | `vllm.gpu_memory_utilization` | `vllm.max_model_len` | Notes |
 |---|---|---|---|
-| **live default** | `0.94` | `262144` | **What is deployed since 2026-10-07** (rolled back from `0.965`): the model's full native window, `10.42 GiB`, `GPU KV cache size: 303,056` (1.16×), `k=1`, and **1.91 GiB of headroom** outside the reserve. The `0.965` profile measured +0.6 GiB more KV on a clean card but OOM'd the device on a production prefill. |
+| **live default** | `0.94` | `262144` | **What is deployed since 2026-10-07** (rolled back from `0.965`): the model's full native window, `10.35 GiB`, `GPU KV cache size: 301,541` (1.15×) at `max_num_seqs=2`, `k=1`, and **1.91 GiB of headroom** outside the reserve. The `0.965` profile measured +0.6 GiB more KV on a clean card but OOM'd the device on a production prefill. |
 | co-tenant-safe | `0.90` | `65536` | The recipe's served default, for a card that is NOT clean. At 0.90 the KV budget cannot cover 262144 (measured: 9.1 GiB available vs 9.29 GiB needed, engine reports max 256000). |
 | 0.965 A/B (not deployed) | `0.965` | `262144` | The trellis-serve recipe value, deployed 2026-10-06 → 2026-10-07. Measured then on a clean card: `11.22 GiB`, `GPU KV cache size: 327,301` (1.25×). **OOM'd the device under real prefill traffic on 2026-10-07** (`UR_RESULT_ERROR_OUT_OF_DEVICE_MEMORY` — ~1.1 GiB outside the reserve is not enough). One line in the compose plus a recreate moves either way; recipe boundary and raw numbers: `../vllm-qwen3.8-exl3-recipe-test/`. |
 
@@ -247,6 +268,13 @@ steps), so they undercount generated tokens; compare only within that campaign.
   after looking at `journalctl --user -u vllm-qwen38-exl3 | tail -50`.
   `scripts/test-support/test-vllm-no-autorestart.py` guards all four surfaces
   (unit, compose, quadlet, memswap's own autostart knobs).
+
+**Model reloads come from page cache.** The unit's `ExecStartPre` runs
+`vmtouch -t /home/USER/models/qwen3.8-exl3` before `podman-compose up -d`,
+so a restart reads the 15.7 GiB checkpoint from RAM instead of NVMe. It is
+reclaimable page cache, not an `mlock` pin (`vmtouch -l` would need
+`RLIMIT_MEMLOCK` above this user's 8 MiB hard limit and would pin 16 GiB).
+Guard: `scripts/test-support/test-vllm-model-cache.py`.
 
 ## Starting it — and the unit-ownership gotcha
 
@@ -456,9 +484,10 @@ budget, not bytes-per-token: k=1 lands only **3.5 %** above the old k=3 pool whi
 paying for a third of the drafts. vLLM also logs `Add 3 padding layers, may waste
 at most 6.25% KV cache memory`, and the draft head shares the target's embedding
 and lm_head weights with the recipe's pruned draft vocab (`MTP draft head uses 512
-of 1940 vocab blocks`). **303,056 tokens still holds one full 262,144-token
-session** (1.16×) — that was the requirement — but a second long session has less
-headroom than the MTP-off pool, so watch `Waiting` / `num_preemptions_total` when
+of 1940 vocab blocks`). **301,541 tokens at `max_num_seqs=2` still holds one full
+262,144-token session** (1.15×) — that was the requirement — but two
+near-full-length sessions exceed it (2 × 262,144 > 301,541), and the 2026-10-18
+probe only exercised 2 × 45,062. Watch `Waiting` / `num_preemptions_total` when
 2–3 agent sessions overlap.
 
 **Measured 2026-10-03: that warning is the bug that shipped.** The gateway held
@@ -480,7 +509,7 @@ landed on the client side (`hermes model.context_length: 131072` → compacts at
 requests admitted, at the cost of **33.4 tok/s** C1 (`bench 3 300`) against 49.84
 for k=1 — reverted, so k=1 stays the landed config.
 **The harness gate cannot see any of this:** `gate` only checks that *one*
-262,144-token session is resident, which 303,056 tokens (1.16×) satisfies — the
+262,144-token session is resident, which 301,541 tokens (1.15×) satisfies — the
 gate passes while the concurrent-agent case it is meant to protect is starving.
 
 **What k=1 buys (measured 2026-10-02 with `bench/sweep.py`, synthetic greedy

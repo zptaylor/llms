@@ -85,6 +85,50 @@ guardrails:
       patterns:
         - {pattern_type: "prebuilt", pattern_name: "aws_access_key",  action: "MASK"}
         - {pattern_type: "prebuilt", pattern_name: "github_token",    action: "MASK"}
+        # Generic credential forms. Mirrored in hooks/secrets-recognizer.json so
+        # the Presidio path carries the same set; the guardrail that wins on the
+        # running build is version-dependent. test-litellm-credential-patterns.py
+        # keeps the two lists identical and exercises each regex.
+        - pattern_type: "regex"
+          name: "credential_assignment"
+          action: "MASK"
+          pattern: >-
+            \b(?:password|passwd|passphrase|pwd)\s*["']?\s*(?::|=|is)\s*(?:"[^"\n]{4,}"|'[^'\n]{4,}'|(?=[^\s"',;]*\d)[^\s"',;]{6,})
+        - pattern_type: "regex"
+          name: "credential_env_assignment"
+          action: "MASK"
+          pattern: >-
+            \b[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY)[A-Za-z0-9_]*\s*["']?\s*[:=]\s*(?:"[^"\n]{4,}"|'[^'\n]{4,}'|(?=[^\s"',;]*\d)[^\s"',;]{6,})
+        - pattern_type: "regex"
+          name: "credential_cli_flag"
+          action: "MASK"
+          pattern: >-
+            --(?:password|passwd|passphrase|token|api-?key|secret|auth-token)(?:=|\s+)(?:"[^"\n]{4,}"|'[^'\n]{4,}'|[^\s"',;]{4,})
+        - pattern_type: "regex"
+          name: "credential_connection_string"
+          action: "MASK"
+          pattern: >-
+            \b[a-z][a-z0-9+.-]*://[^/\s:@]{0,64}:[^/\s@]{1,128}@
+        - pattern_type: "regex"
+          name: "credential_bearer_token"
+          action: "MASK"
+          pattern: >-
+            \bBearer\s+[A-Za-z0-9._~+/=-]{16,}
+        - pattern_type: "regex"
+          name: "credential_jwt"
+          action: "MASK"
+          pattern: >-
+            \beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}
+        - pattern_type: "regex"
+          name: "credential_private_key"
+          action: "MASK"
+          pattern: >-
+            -----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]{0,16384}?-----END [A-Z ]{0,40}PRIVATE KEY-----
+        - pattern_type: "regex"
+          name: "credential_api_key"
+          action: "MASK"
+          pattern: >-
+            \b(?:sk|pk|rk|ghp|gho|ghu|ghs|glpat|xoxb|xoxp|hf|tskey)[-_][A-Za-z0-9_-]{16,}\b
       categories:
         - {category: "claims_phi_disclosure", enabled: false, action: "BLOCK", severity_threshold: "low"}
         - {category: "denied_medical_advice", enabled: false, action: "BLOCK", severity_threshold: "medium"}

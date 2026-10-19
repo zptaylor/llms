@@ -66,6 +66,12 @@ services:
       - "4000:4000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # 10.89.6.1 is the rootless aardvark resolver (compose service names) but its
+    # cached upstream returns empty responses; 100.x.x.x is the host's
+    # Tailscale MagicDNS (external APIs). Keep both.
+    dns:
+      - 10.89.6.1
+      - 100.x.x.x
     depends_on:
       litellm-db:
         condition: service_healthy
@@ -102,10 +108,29 @@ services:
       MEMSWAP_MEMBERS: "${MEMSWAP_MEMBERS:-qwen3.8:8000,nex-n2.5-mini:8003}"
       MEMSWAP_STICKY: "${MEMSWAP_STICKY:-ai-host,local,auto-local}"
       MEMSWAP_ENSURE_TIMEOUT_S: "${MEMSWAP_ENSURE_TIMEOUT_S:-2400}"
+      # Dynamic per-request output cap against the :8000 engine's live KV pool
+      # (output_cap.py). Caps every group that resolves to that backend, and
+      # refuses with a 429 below the floor instead of truncating. Set
+      # VLLM_OUTPUT_CAP=0 to disable without a rebuild.
+      VLLM_ENGINE_BASE: "${VLLM_ENGINE_BASE:-http://host.docker.internal:8000}"
+      VLLM_OUTPUT_CAP: "${VLLM_OUTPUT_CAP:-1}"
+      VLLM_OUTPUT_CAP_MARGIN: "${VLLM_OUTPUT_CAP_MARGIN:-2048}"
+      VLLM_OUTPUT_CAP_FLOOR: "${VLLM_OUTPUT_CAP_FLOOR:-1024}"
+      # Absolute ceiling (0 = off). Without it the dynamic budget alone permits
+      # a `window - prompt` generation, which a client that sends no max_tokens
+      # turns into a multi-hour turn holding one of the two sequence slots.
+      # 16384 still allowed an ~11-minute turn at the collapsed 24.5 tok/s
+      # (VLLM-017): the client timed out first, the engine kept the request in
+      # a sequence slot, and every retry queued behind it. 8192 bounds a
+      # turn to ~5.6 min at that rate (~2.8 min at healthy acceptance). Clients
+      # that need more must be raised deliberately, with the client timeout and
+      # the engine's two slots in mind.
+      VLLM_OUTPUT_CAP_MAX: "${VLLM_OUTPUT_CAP_MAX:-8192}"
     volumes:
       - ./audit-data:/litellm/audit
       - ./config.yaml:/app/config.yaml:ro
       - ./local_models.py:/app/local_models.py:ro,z
+      - ./output_cap.py:/app/output_cap.py:ro,z
       - ./custom_callbacks.py:/app/custom_callbacks.py:ro,z
       - ./context_compressor.py:/app/context_compressor.py:ro,z
       - ./enable_prometheus_metrics.py:/app/enable_prometheus_metrics.py:ro,z

@@ -26,8 +26,13 @@ register_one() {
   local name="$1" port="$2" fallbacks="$3"
 
   if list_models | grep -qx "$name"; then
-    log "'$name' is already registered — leaving it unchanged."
+    log "'$name' is already registered — leaving it unchanged (run apply-engine-guards.sh to enforce the :8000 guards)."
     return 0
+  fi
+
+  local guards=""
+  if [ "$port" = "8000" ]; then
+    guards=',"max_parallel_requests":2,"timeout":1800,"stream_timeout":1800,"num_retries":2'
   fi
 
   curl -sf -m 5 "http://127.0.0.1:${port}/v1/models" >/dev/null \
@@ -42,7 +47,7 @@ register_one() {
       \"litellm_params\": {
         \"model\": \"openai//model\",
         \"api_base\": \"http://host.docker.internal:${port}/v1\",
-        \"api_key\": \"sk-no-key-required\"
+        \"api_key\": \"sk-no-key-required\"${guards}
       },
       \"model_info\": {
         \"fallbacks\": $fallbacks

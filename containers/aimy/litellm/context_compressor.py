@@ -132,10 +132,25 @@ class ContextCompressorHandler(CustomLogger):
                         ],
                         "max_tokens": 1024,
                         "temperature": 0.2,
+                        # The :8010 engine is Ling-3.0-tiny since 2026-10-15 and it
+                        # THINKS by default. With thinking on, the whole 1024-token
+                        # budget goes to the reasoning block and `content` comes
+                        # back EMPTY (measured: the same request with
+                        # enable_thinking false answers in ~1s). Never ask a
+                        # thinking engine for a short answer without this.
+                        "chat_template_kwargs": {"enable_thinking": False},
                     },
                 )
                 resp.raise_for_status()
-                summary = resp.json()["choices"][0]["message"]["content"]
+                summary = (
+                    resp.json()["choices"][0]["message"].get("content") or ""
+                ).strip()
+                if not summary:
+                    # An empty brief is worse than no compression: it would
+                    # replace the middle of the history with nothing. Fail open,
+                    # like every other path in this hook.
+                    print("[context_compressor] empty summary, sending original")
+                    return data
         except Exception as e:
             print(f"[context_compressor] compression failed, sending original: {e}")
             return data
