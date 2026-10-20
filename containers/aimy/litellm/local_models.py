@@ -72,6 +72,17 @@ def backend_window(model: str) -> int:
     return BACKEND_WINDOW.get(model, DEFAULT_BACKEND_WINDOW)
 
 
+# What the B70 engine holds *in flight* -- not what one request may be. The pool
+# is 301,541 KV tokens at `vllm.gpu_memory_utilization=0.94`, max_model_len
+# 262144, batch 4096, MTP k=1 and `max_num_seqs=2` (263,659 at batch 8192).
+# Measured: containers/ai-host/vllm-qwen3.8-exl3/README.md, "Measured on ai-host".
+# Two sequences are admitted at once, so a client that sizes its window for one
+# session can put 2 x window on this pool. The guard in
+# scripts/test-support/test-hermes-agent-wiring.py checks that product.
+B70_KV_POOL_TOKENS = 301541
+B70_MAX_NUM_SEQS = 2
+
+
 ESCAPE_GROUP: str | None = None
 
 COMPRESS_GROUPS = tuple(g for g in PRIMARY_GROUPS if g != ESCAPE_GROUP)

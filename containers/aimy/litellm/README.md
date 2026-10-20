@@ -165,8 +165,16 @@ Each alias (`qwen3.8`, `qwen3.8-65k`, `qwen3.8-96k`, `auto`, `b70`, `local`,
 per alias, not per engine — clients should share one group. The engine itself
 runs `max_num_seqs=2` since 2026-10-18 (`../vllm-qwen3.8-exl3/docker-compose.yml`),
 matching the proxy cap; its pool at 2 is 301,541 tokens, so one full 262,144
-window still fits. Two near-full-length sessions can still preempt — watch
-`num_preemptions_total`.
+window still fits. **Two** near-full windows do not fit, and that is the number
+to hold: the cap here bounds *how many* requests reach the engine, the client's
+`model.context_length` bounds *how big* each one is, and the invariant is
+`max_parallel_requests x (context_length + max_tokens) <= B70_KV_POOL_TOKENS`.
+hermes carries the other half at `context_length 131072`, under the 142,578
+ceiling that the pool allows per request (see
+`hermes-agent/hermes-config.yaml`); it was 163,840 until 2026-10-20, which put
+344,064 tokens of demand on a 301,541-token pool and produced the VLLM-027
+preemption storm. Watch `num_preemptions_total`; a step means some client's
+window grew past half the pool.
 
 The register scripts seed the same values on new rows. Re-run the guard script
 after adding a `:8000` alias:
